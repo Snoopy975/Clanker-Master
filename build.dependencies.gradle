@@ -14,8 +14,9 @@ dependencies {
     implementation 'org.firstinspires.ftc:FtcCommon:12.0.0'
     implementation 'org.firstinspires.ftc:Vision:12.0.0'
     implementation 'androidx.appcompat:appcompat:1.2.0'
-    implementation 'dev.nextftc:ftc:1.1.0'
-    implementation 'dev.nextftc:hardware:1.1.0'
+    implementation 'dev.nextftc.v2:control:0.3.0'
+    implementation 'dev.nextftc.v2:hardware:0.3.0'
+    implementation 'dev.nextftc.v2:robot:0.3.0'
     implementation 'com.pedropathing.ivy:pedro:1.1.1'
 
     implementation 'com.pedropathing:revhub:3.0.2'
