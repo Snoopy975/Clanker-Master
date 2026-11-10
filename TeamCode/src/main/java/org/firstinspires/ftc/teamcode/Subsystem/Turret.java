@@ -6,12 +6,9 @@ import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Servo;
 
-import dev.nextftc.core.commands.Command;
-import dev.nextftc.core.commands.utility.LambdaCommand;
-import dev.nextftc.core.subsystems.Subsystem;
-import dev.nextftc.hardware.impl.MotorEx;
+import dev.nextftc.robot.Mechanism;
 
-public class Turret implements Subsystem {
+public class Turret implements Mechanism {
 
     public static final Turret INSTANCE = new Turret();
 

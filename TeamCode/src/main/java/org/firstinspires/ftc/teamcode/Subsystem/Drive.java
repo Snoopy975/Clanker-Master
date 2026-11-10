@@ -6,9 +6,6 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 
-import dev.nextftc.core.subsystems.Subsystem;
-import dev.nextftc.ftc.ActiveOpMode;
-import dev.nextftc.hardware.impl.MotorEx;
 
 /**
  * Field-centric mecanum drive with acceleration (slew-rate) limiting. NextFTC only, no Pedro.
