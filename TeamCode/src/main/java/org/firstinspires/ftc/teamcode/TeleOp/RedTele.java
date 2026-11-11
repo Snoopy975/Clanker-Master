@@ -1,40 +1,43 @@
 package org.firstinspires.ftc.teamcode.TeleOp;
 
 import static org.firstinspires.ftc.robotcore.external.BlocksOpModeCompanion.gamepad1;
+import static org.firstinspires.ftc.robotcore.external.BlocksOpModeCompanion.hardwareMap;
 
-import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
+import org.firstinspires.ftc.teamcode.Robot;
 
-import org.firstinspires.ftc.teamcode.Subsystem.Drive;
+import dev.nextftc.robot.opmode.BulkReadHook;
+import dev.nextftc.robot.opmode.NextOpMode;
+import dev.nextftc.robot.opmode.NextTeleop;
 
-import dev.nextftc.core.components.BindingsComponent;
-import dev.nextftc.core.components.SubsystemComponent;
-import dev.nextftc.ftc.NextFTCOpMode;
-import dev.nextftc.ftc.components.BulkReadComponent;
+@NextTeleop(name = "RedTele", group = "TeleOp")
+public class RedTele extends NextOpMode {
 
-@TeleOp(name = "Tele", group = "TeleOp")
-public class Tele extends NextFTCOpMode {
+    private final Robot robot;
 
-    public Tele() {
-        addComponents(
-                new SubsystemComponent(Drive.INSTANCE),
-                BulkReadComponent.INSTANCE,
-                BindingsComponent.INSTANCE
-        );
+    public RedTele(Robot robot) {
+        super(robot, BulkReadHook.INSTANCE);
+        this.robot = robot;
+        // v2 has no init(): hardwareMap lookups go in the constructor
+        robot.drive.init(hardwareMap);
     }
 
     @Override
-    public void onUpdate() {
-        if (gamepad1.y) {
-            Drive.INSTANCE.resetHeading();
+    public void start() {
+        robot.drive.startDrive(gamepad1);
+    }
+
+    @Override
+    public void periodic() {
+        if (gamepad1.yWasPressed()) {
+            robot.drive.resetHeading();
         }
 
         // Hold left trigger for slow mode
-        Drive.INSTANCE.setSlowMode(gamepad1.left_trigger > 0.5);
+        robot.drive.setSlowMode(gamepad1.left_trigger > 0.5);
 
-        Drive.INSTANCE.drive(
-                -gamepad1.left_stick_y,
-                gamepad1.left_stick_x,
-                gamepad1.right_stick_x
-        );
+        // Example auto-align (set a real pose first, then uncomment):
+        // if (gamepad1.bWasPressed()) robot.drive.goTo(new Pose(72, 72, Math.toRadians(90)));
+
+        telemetry.addData("Pose", robot.drive.getPose());
     }
 }
