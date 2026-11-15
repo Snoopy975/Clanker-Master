@@ -1,23 +1,21 @@
 package org.firstinspires.ftc.teamcode;
 
-import org.firstinspires.ftc.teamcode.Mechanisms.Drive;
+import org.firstinspires.ftc.teamcode.mechanisms.Drive;
+import org.firstinspires.ftc.teamcode.mechanisms.Intake;
 
 import java.util.Set;
 
 import dev.nextftc.robot.Mechanism;
 import dev.nextftc.robot.NextRobot;
 
-/**
- * The ONE NextRobot implementation. NextFTC finds it by scanning the classpath and hands the same
- * instance to every NextOpMode. It needs a public no-arg constructor.
- * Add every Mechanism here or its periodic() never runs (e.g. Flywheel, Turret).
- */
 public class Robot implements NextRobot {
 
     public final Drive drive = new Drive();
+    public final Intake Intake = new Intake();
+
 
     @Override
     public Set<Mechanism> getMechanisms() {
-        return Set.of(drive);
+        return Set.of(drive, Intake);
     }
 }
