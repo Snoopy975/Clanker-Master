@@ -18,7 +18,7 @@ public class Config {
     //Expansion hub
     public static int intake = 0;
     public static int FlywheelMotor = 1;
-    public static int rightLiftMotor = 2;
+    public static int turret = 2;
     public static int intakeMotor = 3;
 
 
