@@ -23,17 +23,11 @@ import dev.nextftc.robot.Mechanism;
 
 /**
  * NextFTC v2 drivetrain Mechanism backed by Pedro Pathing 3.
- *
- * Pedro's Mecanum drivetrain is the ONLY thing that writes to fl/bl/fr/br, so do not create
- * NextMotor objects for those motors anywhere else.
- *
  * Modes:
  *   MANUAL - field-centric driving (heading from the Pinpoint) with stick shaping, slew limiting,
  *            voltage compensation, optional heading hold, slow mode.
  *   HOLD   - Pedro holds the pose where you let go of the sticks (optional hold assist).
  *   AUTO   - Pedro drives a straight line to a target pose (goTo). Moving the sticks cancels it.
- *
- * Call init(hardwareMap) from your OpMode constructor, then startDrive(gamepad1) in start().
  */
 public class Drive implements Mechanism {
 
