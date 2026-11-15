@@ -1,29 +1,40 @@
 package org.firstinspires.ftc.teamcode.opmodes.auto;
 
-import com.pedropathing.drivetrain.DrivePowers;
-import com.pedropathing.revhub.drivetrains.Mecanum;
+import com.pedropathing.ivy.Command;
+import com.pedropathing.ivy.commands.Commands;
+import com.pedropathing.ivy.groups.Groups;
 import com.qualcomm.hardware.limelightvision.LLResult;
 import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
-import com.qualcomm.hardware.lynx.LynxModule;
-import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
-import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
-import com.qualcomm.robotcore.hardware.CRServo;
-import com.qualcomm.robotcore.hardware.DcMotor;
-import com.qualcomm.robotcore.hardware.DcMotorEx;
-import com.qualcomm.robotcore.hardware.DcMotorSimple;
-import com.qualcomm.robotcore.hardware.DigitalChannel;
 import com.qualcomm.robotcore.util.ElapsedTime;
 import com.qualcomm.robotcore.util.Range;
 
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Position;
-import org.firstinspires.ftc.teamcode.pedro.Constants;
+import org.firstinspires.ftc.teamcode.Robot;
 
+import java.util.ArrayList;
 import java.util.List;
 
-@Autonomous(name = "Auto", group = "Auto")
-public class Auto extends LinearOpMode {
+import dev.nextftc.robot.opmode.NextAutonomous;
+import dev.nextftc.robot.opmode.NextOpMode;
+
+
+/**
+ * Vision autonomous, NextFTC command style. No path following or localization.
+ *
+ *   FIRE : Limelight AprilTag pipeline. Turn until the tag is centered, set the flywheel from tag
+ *          distance, and only run the intake into the shooter once aimed, in range and spun up.
+ *   HUNT : Limelight detector pipeline. Drive at the biggest ball while the intake runs; spin to
+ *          search when nothing is visible; stop when the intake is full.
+ *
+ * The auto is one big Ivy command: fire, then (hunt, fire) repeated until time runs out.
+ *
+ * Limelight setup (limelight.local:5801): pipeline 0 = AprilTag, pipeline 1 = ball detector.
+ * Every number in Tunables is a PLACEHOLDER to tune on the robot.
+ */
+@NextAutonomous(name = "Auto")
+public class Auto extends NextOpMode {
 
     // ---- Tunables ----
     public static int TAG_PIPELINE = 0;
@@ -32,29 +43,27 @@ public class Auto extends LinearOpMode {
     public static String BALL_CLASS = "";           // "" = any detector class
 
     public static double AUTO_SECONDS = 30;
-    public static double END_BUFFER = 1.0;          // stop doing new things this close to the end
+    public static double END_BUFFER = 1.0;          // stop starting new things this close to the end
+    public static int MAX_CYCLES = 6;               // upper bound on hunt+fire repeats (time cuts it short)
 
     // aiming
-    public static double AIM_KP = 0.02;             // power per degree of tag error
+    public static double AIM_KP = 0.02;             // turn power per degree of tag error
     public static double AIM_MAX_TURN = 0.35;
     public static double AIM_TOLERANCE_DEG = 2.0;
     public static double MIN_FIRE_DIST_M = 0.8;     // fire window (camera to tag)
     public static double MAX_FIRE_DIST_M = 3.0;
     public static double SEARCH_TURN = 0.25;
 
-    // flywheel (ticks/sec). Tune FLY_BASE and FLY_PER_METER from test shots.
-    public static String FLY_LEFT = "outL";
-    public static String FLY_RIGHT = "outR";
-    public static double FLY_BASE = 1100;
-    public static double FLY_PER_METER = 250;
-    public static double FLY_MIN = 600;
-    public static double FLY_MAX = 2000;
-    public static double FLY_TOLERANCE = 60;
-    public static double READY_HOLD_S = 0.15;       // must be aimed + at speed this long to fire
+    // flywheel (open-loop throttle 0..1, so spin-up is judged by time, not measured speed)
+    public static double FLY_BASE = 0.55;
+    public static double FLY_PER_METER = 0.08;
+    public static double FLY_MIN = 0.30;
+    public static double FLY_MAX = 1.0;
+    public static double FLY_DEADBAND = 0.02;       // ignore setpoint jitter smaller than this
+    public static double FLY_SETTLE_S = 1.2;        // setpoint must be stable this long before firing
+    public static double READY_HOLD_S = 0.15;       // aimed + in range + settled for this long to fire
 
-    // feeding
-    public static String FEEDER_NAME = "feeder";    // CRServo that pushes a piece into the flywheel
-    public static double FEED_POWER = 1.0;
+    // firing: the intake pushes the piece into the flywheel
     public static double FEED_TIME_S = 0.35;
     public static double FEED_GAP_S = 0.35;
     public static int SHOTS_PER_CYCLE = 4;
@@ -64,160 +73,147 @@ public class Auto extends LinearOpMode {
     public static double HUNT_FORWARD = 0.4;
     public static double HUNT_TURN_KP = 0.02;
     public static double HUNT_MAX_TURN = 0.4;
-    public static double HUNT_TURN_ONLY_DEG = 18;   // if the ball is further off than this, rotate first
-    public static double LOST_GRACE_S = 0.5;        // keep driving this long after the ball leaves view
+    public static double HUNT_TURN_ONLY_DEG = 18;   // ball further off than this: rotate in place first
+    public static double LOST_GRACE_S = 0.5;        // keep rolling this long after the ball leaves view
     public static double HUNT_TIMEOUT_S = 12.0;
 
-    // intake (plain hardwareMap motor; the NextFTC Intake mechanism needs a NextRobot loop, which a LinearOpMode doesn't run)
-    public static String INTAKE_NAME = "intake";
-    public static String INTAKE_SENSOR_NAME = "intakeSensor"; // optional beam break (digital); counts pieces
-    public static boolean SENSOR_BLOCKED_IS_LOW = true;       // flip if the count never changes / counts constantly
-    public static int INTAKE_CAPACITY = 3;                    // stop hunting after this many pieces
-
-    // ---- Hardware ----
+    private final Robot robot;
     private Limelight3A limelight;
-    private Mecanum drivetrain;
-    private DcMotorEx intakeMotor;
-    private DigitalChannel intakeSensor;
-    private int intakeCount = 0;
-    private boolean sensorWasBlocked = false;
-    private DcMotorEx flyL, flyR;
-    private CRServo feeder;
-
-    private int activePipeline = -1;
-    private double flyTarget = 0;
-    private int searchDir = 1;
 
     private final ElapsedTime match = new ElapsedTime();
+    private final ElapsedTime cycleTimer = new ElapsedTime();
+    private final ElapsedTime flyTimer = new ElapsedTime();
+    private final ElapsedTime readyTimer = new ElapsedTime();
+    private final ElapsedTime feedTimer = new ElapsedTime();
+    private final ElapsedTime huntTimer = new ElapsedTime();
+    private final ElapsedTime sinceSeen = new ElapsedTime();
+
+    private int shots = 0;
+    private boolean aimed = false, inRange = false, wasReady = false, fireOk = false;
+    private double flyCmd = 0;
+    private double lastTurn = 0;
+    private final double searchDir = 1;
+
+    public Auto(Robot robot) {
+        super(robot);
+        this.robot = robot;
+    }
 
     @Override
-    public void runOpMode() {
-        for (LynxModule hub : hardwareMap.getAll(LynxModule.class)) {
-            hub.setBulkCachingMode(LynxModule.BulkCachingMode.AUTO);
-        }
-
-        drivetrain = new Mecanum(hardwareMap, Constants.driveConfig);
-        intakeMotor = hardwareMap.get(DcMotorEx.class, INTAKE_NAME);
-        intakeSensor = hardwareMap.tryGet(DigitalChannel.class, INTAKE_SENSOR_NAME);
-        if (intakeSensor != null) intakeSensor.setMode(DigitalChannel.Mode.INPUT);
-
-        flyL = hardwareMap.get(DcMotorEx.class, FLY_LEFT);
-        flyR = hardwareMap.get(DcMotorEx.class, FLY_RIGHT);
-        flyR.setDirection(DcMotorSimple.Direction.REVERSE); // flip if the wheels fight each other
-        flyL.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        flyR.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-
-        feeder = hardwareMap.tryGet(CRServo.class, FEEDER_NAME);
-
+    public void start() {
         limelight = hardwareMap.get(Limelight3A.class, "limelight");
         limelight.setPollRateHz(100);
         limelight.start();
-        setPipeline(TAG_PIPELINE);
-
-        while (opModeInInit()) {
-            telemetry.addData("Feeder", feeder == null ? "MISSING (add CRServo '" + FEEDER_NAME + "')" : "ok");
-            LLResult r = limelight.getLatestResult();
-            telemetry.addData("Limelight", r == null ? "no data" : "valid=" + r.isValid());
-            telemetry.update();
-            sleep(50);
-        }
-
         match.reset();
 
-        // Preload first, then hunt and fire until time runs out.
-        fireCycle();
-        while (opModeIsActive() && timeLeft() > END_BUFFER) {
-            hunt();
-            if (timeLeft() <= END_BUFFER) break;
-            fireCycle();
+        List<Command> steps = new ArrayList<>();
+        steps.add(fireCycle());                                   // shoot the preload first
+        for (int i = 0; i < MAX_CYCLES; i++) {
+            steps.add(Commands.conditional(this::timeOk,
+                    Groups.sequential(huntCycle(), fireCycle()),
+                    Commands.instant(() -> { })));
         }
+        steps.add(Commands.instant(this::stopAll));
+        Groups.sequential(steps.toArray(new Command[0])).schedule();
+    }
 
+    @Override
+    public void end() {
         stopAll();
-        limelight.stop();
     }
 
     // ------------------------------------------------------------------ FIRE
 
-    private void fireCycle() {
-        setPipeline(TAG_PIPELINE);
-        intakeOff();
-        int shots = 0;
-        ElapsedTime cycle = new ElapsedTime();
-        ElapsedTime ready = new ElapsedTime();
-        boolean wasReady = false;
-
-        while (opModeIsActive() && shots < SHOTS_PER_CYCLE
-                && cycle.seconds() < FIRE_TIMEOUT_S && timeLeft() > END_BUFFER) {
-
-            LLResultTypes.FiducialResult tag = currentTag();
-
-            if (tag == null) {
-                // Can't see a tag: spin slowly to find one. Keep the flywheel warm.
-                drive(0, 0, searchDir * SEARCH_TURN);
-                setFlywheel(Range.clip(FLY_BASE, FLY_MIN, FLY_MAX));
-                wasReady = false;
-                telemetry.addData("Fire", "searching for tag");
-                telemetry.update();
-                continue;
-            }
-
-            double tx = tag.getTargetXDegrees();
-            double dist = tagDistanceM(tag);
-            setFlywheel(Range.clip(FLY_BASE + FLY_PER_METER * dist, FLY_MIN, FLY_MAX));
-
-            // Limelight tx is + when the target is to the right; turning CCW is +, so negate.
-            double turn = Math.abs(tx) < AIM_TOLERANCE_DEG ? 0 : Range.clip(-tx * AIM_KP, -AIM_MAX_TURN, AIM_MAX_TURN);
-            drive(0, 0, turn);
-
-            boolean aimed = Math.abs(tx) < AIM_TOLERANCE_DEG;
-            boolean inRange = dist >= MIN_FIRE_DIST_M && dist <= MAX_FIRE_DIST_M;
-            boolean atSpeed = flywheelAtSpeed();
-            boolean ok = aimed && inRange && atSpeed;
-
-            if (ok && !wasReady) ready.reset();
-            wasReady = ok;
-
-            telemetry.addData("Tag tx", "%.1f deg", tx);
-            telemetry.addData("Tag dist", "%.2f m", dist);
-            telemetry.addData("aimed/range/speed", "%s / %s / %s", aimed, inRange, atSpeed);
-            telemetry.addData("Shots", shots);
-            telemetry.update();
-
-            if (ok && ready.seconds() >= READY_HOLD_S) {
-                drivetrain.stop();
-                feedOnce();
-                shots++;
-                wasReady = false;
-            }
+    private Command fireCycle() {
+        List<Command> steps = new ArrayList<>();
+        steps.add(robot.Intake.stop());
+        steps.add(Commands.instant(() -> {
+            setPipeline(TAG_PIPELINE);
+            shots = 0;
+            wasReady = false;
+            cycleTimer.reset();
+        }));
+        for (int i = 0; i < SHOTS_PER_CYCLE; i++) {
+            steps.add(Commands.conditional(this::canShoot, shootOne(), Commands.instant(() -> { })));
         }
-
-        feed(false);
-        setFlywheel(0);
-        intakeOn(); // re-arm the intake and reset its count
+        steps.add(Commands.instant(() -> {
+            robot.flywheel.stop();
+            flyCmd = 0;
+            robot.drive.stop();
+            robot.Intake.resetCount();                            // shots also trip the beam break
+        }));
+        return Groups.sequential(steps.toArray(new Command[0]));
     }
 
-    private void feedOnce() {
-        ElapsedTime t = new ElapsedTime();
-        feed(true);
-        while (opModeIsActive() && t.seconds() < FEED_TIME_S) {
-            setFlywheel(flyTarget);
+    private Command shootOne() {
+        return Groups.sequential(
+                Commands.instant(() -> { fireOk = false; wasReady = false; }),
+                // aim and spin up until ready (or the cycle times out)
+                Commands.infinite(this::aimStep).until(() -> {
+                    if (wasReady && readyTimer.seconds() >= READY_HOLD_S) { fireOk = true; return true; }
+                    return cycleExpired();
+                }),
+                Commands.conditional(() -> fireOk,
+                        Groups.sequential(
+                                Commands.instant(() -> { robot.drive.stop(); feedTimer.reset(); }),
+                                robot.Intake.run().until(() -> feedTimer.seconds() >= FEED_TIME_S),
+                                robot.Intake.stop(),
+                                Commands.instant(() -> { shots++; feedTimer.reset(); }),
+                                // let the flywheel recover before the next piece
+                                Commands.infinite(() -> { }).until(() -> feedTimer.seconds() >= FEED_GAP_S)),
+                        Commands.instant(() -> { })));
+    }
+
+    /** One loop of aiming: turn toward the tag, set the flywheel from distance, track "ready". */
+    private void aimStep() {
+        LLResultTypes.FiducialResult tag = currentTag();
+        if (tag == null) {
+            // No tag: spin slowly to find one, keep the flywheel warm.
+            robot.drive.setPowers(0, 0, searchDir * SEARCH_TURN);
+            setFlywheel(FLY_BASE);
+            aimed = false;
+            inRange = false;
+            wasReady = false;
+            log("Fire", "searching for tag");
+            return;
         }
-        feed(false);
-        t.reset();
-        while (opModeIsActive() && t.seconds() < FEED_GAP_S) {
-            setFlywheel(flyTarget); // let the flywheel recover before the next piece
+
+        double tx = tag.getTargetXDegrees();
+        double dist = tagDistanceM(tag);
+        setFlywheel(FLY_BASE + FLY_PER_METER * dist);
+
+        // Limelight tx is + when the target is to the right; CCW is +, so negate.
+        aimed = Math.abs(tx) < AIM_TOLERANCE_DEG;
+        double turn = aimed ? 0 : Range.clip(-tx * AIM_KP, -AIM_MAX_TURN, AIM_MAX_TURN);
+        robot.drive.setPowers(0, 0, turn);
+
+        inRange = dist >= MIN_FIRE_DIST_M && dist <= MAX_FIRE_DIST_M;
+        boolean ok = aimed && inRange && flyTimer.seconds() >= FLY_SETTLE_S;
+        if (ok && !wasReady) readyTimer.reset();
+        wasReady = ok;
+
+        log("Tag tx / dist", String.format("%.1f deg / %.2f m", tx, dist));
+        log("aimed / range / spun up", aimed + " / " + inRange + " / " + (flyTimer.seconds() >= FLY_SETTLE_S));
+        log("Shots", shots);
+    }
+
+    private void setFlywheel(double throttle) {
+        double t = Range.clip(throttle, FLY_MIN, FLY_MAX);
+        if (Math.abs(t - flyCmd) > FLY_DEADBAND) {
+            flyCmd = t;
+            flyTimer.reset();                                      // new setpoint: wait for it to settle
+            robot.flywheel.setThrottle(t);
         }
     }
 
-    private void feed(boolean on) {
-        if (feeder != null) feeder.setPower(on ? FEED_POWER : 0);
-    }
+    private boolean canShoot() { return shots < SHOTS_PER_CYCLE && !cycleExpired(); }
+
+    private boolean cycleExpired() { return cycleTimer.seconds() >= FIRE_TIMEOUT_S || !timeOk(); }
 
     private LLResultTypes.FiducialResult currentTag() {
         LLResult r = latest(TAG_PIPELINE);
         if (r == null) return null;
-        List<LLResultTypes.FiducialResult> list = r.getFiducialResults();
-        for (LLResultTypes.FiducialResult fr : list) {
+        for (LLResultTypes.FiducialResult fr : r.getFiducialResults()) {
             if (TAG_ID < 0 || fr.getFiducialId() == TAG_ID) return fr;
         }
         return null;
@@ -231,48 +227,51 @@ public class Auto extends LinearOpMode {
 
     // ------------------------------------------------------------------ HUNT
 
-    private void hunt() {
-        setPipeline(BALL_PIPELINE);
-        setFlywheel(0);
-        intakeOn();
+    private Command huntCycle() {
+        return Groups.sequential(
+                Commands.instant(() -> {
+                    setPipeline(BALL_PIPELINE);
+                    robot.flywheel.stop();
+                    flyCmd = 0;
+                    robot.Intake.resetCount();
+                    huntTimer.reset();
+                    sinceSeen.reset();
+                    lastTurn = 0;
+                }),
+                // intake runs while the drive chases the ball; both end together
+                Groups.parallel(
+                        robot.Intake.run().until(this::huntDone),
+                        Commands.infinite(this::huntStep).until(this::huntDone)),
+                Commands.instant(() -> robot.drive.stop()));
+    }
 
-        ElapsedTime hunt = new ElapsedTime();
-        ElapsedTime sinceSeen = new ElapsedTime();
-        double lastTurn = 0;
+    private boolean huntDone() {
+        return robot.Intake.isFull() || huntTimer.seconds() >= HUNT_TIMEOUT_S || !timeOk();
+    }
 
-        while (opModeIsActive() && timeLeft() > END_BUFFER
-                && hunt.seconds() < HUNT_TIMEOUT_S && !intakeFull()) {
-
-            updateIntakeCount();
-            LLResultTypes.DetectorResult ball = bestBall();
-
-            double fwd, turn;
-            if (ball != null) {
-                sinceSeen.reset();
-                double tx = ball.getTargetXDegrees();
-                turn = Range.clip(-tx * HUNT_TURN_KP, -HUNT_MAX_TURN, HUNT_MAX_TURN);
-                lastTurn = turn;
-                // Rotate first if it's far off center, otherwise drive at it while correcting.
-                fwd = Math.abs(tx) > HUNT_TURN_ONLY_DEG ? 0 : HUNT_FORWARD;
-                telemetry.addData("Ball", "tx=%.1f ty=%.1f area=%.2f",
-                        tx, ball.getTargetYDegrees(), ball.getTargetArea());
-            } else if (sinceSeen.seconds() < LOST_GRACE_S) {
-                // Ball is probably in the camera's blind spot under the intake: keep rolling.
-                fwd = HUNT_FORWARD;
-                turn = lastTurn * 0.5;
-                telemetry.addData("Ball", "lost, coasting");
-            } else {
-                fwd = 0;
-                turn = searchDir * SEARCH_TURN;
-                telemetry.addData("Ball", "searching");
-            }
-
-            drive(fwd, 0, turn);
-            telemetry.addData("Intake", "count=%d/%d", intakeCount, INTAKE_CAPACITY);
-            telemetry.update();
+    private void huntStep() {
+        LLResultTypes.DetectorResult ball = bestBall();
+        double fwd, turn;
+        if (ball != null) {
+            sinceSeen.reset();
+            double tx = ball.getTargetXDegrees();
+            turn = Range.clip(-tx * HUNT_TURN_KP, -HUNT_MAX_TURN, HUNT_MAX_TURN);
+            lastTurn = turn;
+            // Rotate first if it's far off center, otherwise drive at it while correcting.
+            fwd = Math.abs(tx) > HUNT_TURN_ONLY_DEG ? 0 : HUNT_FORWARD;
+            log("Ball", String.format("tx=%.1f ty=%.1f area=%.2f", tx, ball.getTargetYDegrees(), ball.getTargetArea()));
+        } else if (sinceSeen.seconds() < LOST_GRACE_S) {
+            // Probably in the camera's blind spot right in front of the intake: keep rolling.
+            fwd = HUNT_FORWARD;
+            turn = lastTurn * 0.5;
+            log("Ball", "lost, coasting");
+        } else {
+            fwd = 0;
+            turn = searchDir * SEARCH_TURN;
+            log("Ball", "searching");
         }
-
-        drivetrain.stop();
+        robot.drive.setPowers(fwd, 0, turn);
+        log("Intake", robot.Intake.getCount() + "/" + robot.Intake.CAPACITY);
     }
 
     private LLResultTypes.DetectorResult bestBall() {
@@ -289,67 +288,26 @@ public class Auto extends LinearOpMode {
     // ------------------------------------------------------------------ helpers
 
     private void setPipeline(int p) {
-        if (activePipeline != p) {
-            limelight.pipelineSwitch(p);
-            activePipeline = p;
-            sleep(50);
-        }
+        limelight.pipelineSwitch(p);
     }
 
-    /** Latest result, but only if it came from the pipeline we asked for (ignores stale frames after a switch). */
+    /** Latest result, only if it came from the pipeline we want (ignores stale frames right after a switch). */
     private LLResult latest(int pipeline) {
         LLResult r = limelight.getLatestResult();
         if (r == null || !r.isValid() || r.getPipelineIndex() != pipeline) return null;
         return r;
     }
 
-    private void setFlywheel(double velocity) {
-        flyTarget = velocity;
-        flyL.setVelocity(velocity);
-        flyR.setVelocity(velocity);
-    }
-
-    private boolean flywheelAtSpeed() {
-        if (flyTarget <= 0) return false;
-        double avg = (flyL.getVelocity() + flyR.getVelocity()) / 2.0;
-        return Math.abs(avg - flyTarget) < FLY_TOLERANCE;
-    }
-
-    /** Robot-relative: forward, strafe LEFT, turn CCW (Pedro convention). */
-    private void drive(double forward, double left, double ccw) {
-        drivetrain.drive(new DrivePowers(forward, left, ccw), false);
-    }
-
-    private void intakeOn() {
-        intakeCount = 0;
-        sensorWasBlocked = false;
-        intakeMotor.setPower(1.0);
-    }
-
-    private void intakeOff() {
-        intakeMotor.setPower(0);
-    }
-
-    /** Counts a piece each time the beam break goes from clear to blocked. No sensor = never "full" (hunt timeout ends it). */
-    private void updateIntakeCount() {
-        if (intakeSensor == null) return;
-        boolean blocked = SENSOR_BLOCKED_IS_LOW ? !intakeSensor.getState() : intakeSensor.getState();
-        if (blocked && !sensorWasBlocked) intakeCount++;
-        sensorWasBlocked = blocked;
-    }
-
-    private boolean intakeFull() {
-        return intakeSensor != null && intakeCount >= INTAKE_CAPACITY;
-    }
-
-    private double timeLeft() {
-        return AUTO_SECONDS - match.seconds();
-    }
+    private boolean timeOk() { return AUTO_SECONDS - match.seconds() > END_BUFFER; }
 
     private void stopAll() {
-        drivetrain.stop();
-        setFlywheel(0);
-        feed(false);
-        intakeOff();
+        robot.drive.stop();
+        robot.flywheel.stop();
+        robot.Intake.halt();
+    }
+
+    /** One place to adapt if NextOpMode's telemetry field isn't the plain FTC Telemetry. */
+    private void log(String key, Object value) {
+        telemetry.addData(key, value);
     }
 }
