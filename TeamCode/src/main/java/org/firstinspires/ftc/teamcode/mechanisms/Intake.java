@@ -7,7 +7,6 @@ import org.firstinspires.ftc.teamcode.data.Config;
 import dev.nextftc.hardware.RobotController;
 import dev.nextftc.hardware.actuators.NextMotor;
 import dev.nextftc.hardware.sensors.NextDigitalSensor;
-import dev.nextftc.hardware.sensors.NextDistanceSensor;
 import dev.nextftc.robot.Mechanism;
 
 public class Intake implements Mechanism {
@@ -16,7 +15,7 @@ public class Intake implements Mechanism {
 
     @Override
     public void periodic() {
-        beamBreak.update();
+        boolean raw = beamBreak.getRawState();
         if (beamBreak.isTriggered()) {
 
         }
@@ -27,5 +26,8 @@ public class Intake implements Mechanism {
     }
     public Command out(){
         return instant(() -> motor.setThrottle(-1.0));
+    }
+    public Command stop(){
+        return instant(() -> motor.setThrottle(0));
     }
 }

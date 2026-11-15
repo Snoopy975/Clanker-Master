@@ -22,21 +22,6 @@ import org.firstinspires.ftc.teamcode.pedro.Constants;
 
 import java.util.List;
 
-/**
- * Vision autonomous (no path following, no localization needed):
- *
- *   FIRE : Limelight AprilTag pipeline. The robot turns until the tag is centered, sets the flywheel
- *          speed from the tag distance, and only feeds a game piece once it is aimed, in range and
- *          the flywheel is at speed.
- *   HUNT : Limelight detector pipeline. The robot drives at the biggest ball it sees while the
- *          intake runs. It spins to search if it sees nothing. Stops when the intake is full.
- *
- * Limelight setup (web UI at limelight.local:5801):
- *   pipeline 0 = AprilTag (fiducial) pipeline
- *   pipeline 1 = Neural Detector (or Color) pipeline trained on the balls
- *
- * Everything in the Tunables block is a PLACEHOLDER to tune on the real robot.
- */
 @Autonomous(name = "Auto", group = "Auto")
 public class Auto extends LinearOpMode {
 
