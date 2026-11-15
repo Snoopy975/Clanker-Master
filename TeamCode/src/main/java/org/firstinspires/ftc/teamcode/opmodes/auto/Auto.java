@@ -12,12 +12,12 @@ import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
+import com.qualcomm.robotcore.hardware.DigitalChannel;
 import com.qualcomm.robotcore.util.ElapsedTime;
 import com.qualcomm.robotcore.util.Range;
 
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Position;
-import org.firstinspires.ftc.teamcode.mechanisms.Intake;
 import org.firstinspires.ftc.teamcode.pedro.Constants;
 
 import java.util.List;
@@ -37,8 +37,8 @@ import java.util.List;
  *
  * Everything in the Tunables block is a PLACEHOLDER to tune on the real robot.
  */
-@Autonomous(name = "VisionAuto", group = "Auto")
-public class VisionAuto extends LinearOpMode {
+@Autonomous(name = "Auto", group = "Auto")
+public class Auto extends LinearOpMode {
 
     // ---- Tunables ----
     public static int TAG_PIPELINE = 0;
@@ -83,10 +83,19 @@ public class VisionAuto extends LinearOpMode {
     public static double LOST_GRACE_S = 0.5;        // keep driving this long after the ball leaves view
     public static double HUNT_TIMEOUT_S = 12.0;
 
+    // intake (plain hardwareMap motor; the NextFTC Intake mechanism needs a NextRobot loop, which a LinearOpMode doesn't run)
+    public static String INTAKE_NAME = "intake";
+    public static String INTAKE_SENSOR_NAME = "intakeSensor"; // optional beam break (digital); counts pieces
+    public static boolean SENSOR_BLOCKED_IS_LOW = true;       // flip if the count never changes / counts constantly
+    public static int INTAKE_CAPACITY = 3;                    // stop hunting after this many pieces
+
     // ---- Hardware ----
     private Limelight3A limelight;
     private Mecanum drivetrain;
-    private final Intake intake = new Intake();
+    private DcMotorEx intakeMotor;
+    private DigitalChannel intakeSensor;
+    private int intakeCount = 0;
+    private boolean sensorWasBlocked = false;
     private DcMotorEx flyL, flyR;
     private CRServo feeder;
 
@@ -102,8 +111,10 @@ public class VisionAuto extends LinearOpMode {
             hub.setBulkCachingMode(LynxModule.BulkCachingMode.AUTO);
         }
 
-        drivetrain = new Mecanum(hardwareMap, Constants.drivetrainConfig);
-        intake.init(hardwareMap);
+        drivetrain = new Mecanum(hardwareMap, Constants.driveConfig);
+        intakeMotor = hardwareMap.get(DcMotorEx.class, INTAKE_NAME);
+        intakeSensor = hardwareMap.tryGet(DigitalChannel.class, INTAKE_SENSOR_NAME);
+        if (intakeSensor != null) intakeSensor.setMode(DigitalChannel.Mode.INPUT);
 
         flyL = hardwareMap.get(DcMotorEx.class, FLY_LEFT);
         flyR = hardwareMap.get(DcMotorEx.class, FLY_RIGHT);
@@ -144,8 +155,7 @@ public class VisionAuto extends LinearOpMode {
 
     private void fireCycle() {
         setPipeline(TAG_PIPELINE);
-        intake.stop();
-        intake.periodic(); // push the stop to the motor now; periodic() is what actually writes power
+        intakeOff();
         int shots = 0;
         ElapsedTime cycle = new ElapsedTime();
         ElapsedTime ready = new ElapsedTime();
@@ -198,7 +208,7 @@ public class VisionAuto extends LinearOpMode {
 
         feed(false);
         setFlywheel(0);
-        intake.start(); // re-arm the intake and reset its count
+        intakeOn(); // re-arm the intake and reset its count
     }
 
     private void feedOnce() {
@@ -239,16 +249,16 @@ public class VisionAuto extends LinearOpMode {
     private void hunt() {
         setPipeline(BALL_PIPELINE);
         setFlywheel(0);
-        intake.start();
+        intakeOn();
 
         ElapsedTime hunt = new ElapsedTime();
         ElapsedTime sinceSeen = new ElapsedTime();
         double lastTurn = 0;
 
         while (opModeIsActive() && timeLeft() > END_BUFFER
-                && hunt.seconds() < HUNT_TIMEOUT_S && !intake.isFull()) {
+                && hunt.seconds() < HUNT_TIMEOUT_S && !intakeFull()) {
 
-            intake.periodic();
+            updateIntakeCount();
             LLResultTypes.DetectorResult ball = bestBall();
 
             double fwd, turn;
@@ -273,7 +283,7 @@ public class VisionAuto extends LinearOpMode {
             }
 
             drive(fwd, 0, turn);
-            telemetry.addData("Intake", "%s count=%d", intake.getState(), intake.getCount());
+            telemetry.addData("Intake", "count=%d/%d", intakeCount, INTAKE_CAPACITY);
             telemetry.update();
         }
 
@@ -325,6 +335,28 @@ public class VisionAuto extends LinearOpMode {
         drivetrain.drive(new DrivePowers(forward, left, ccw), false);
     }
 
+    private void intakeOn() {
+        intakeCount = 0;
+        sensorWasBlocked = false;
+        intakeMotor.setPower(1.0);
+    }
+
+    private void intakeOff() {
+        intakeMotor.setPower(0);
+    }
+
+    /** Counts a piece each time the beam break goes from clear to blocked. No sensor = never "full" (hunt timeout ends it). */
+    private void updateIntakeCount() {
+        if (intakeSensor == null) return;
+        boolean blocked = SENSOR_BLOCKED_IS_LOW ? !intakeSensor.getState() : intakeSensor.getState();
+        if (blocked && !sensorWasBlocked) intakeCount++;
+        sensorWasBlocked = blocked;
+    }
+
+    private boolean intakeFull() {
+        return intakeSensor != null && intakeCount >= INTAKE_CAPACITY;
+    }
+
     private double timeLeft() {
         return AUTO_SECONDS - match.seconds();
     }
@@ -333,7 +365,6 @@ public class VisionAuto extends LinearOpMode {
         drivetrain.stop();
         setFlywheel(0);
         feed(false);
-        intake.stop();
-        intake.periodic();
+        intakeOff();
     }
 }
