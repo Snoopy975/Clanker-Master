@@ -4,6 +4,9 @@ import com.qualcomm.hardware.limelightvision.LLResult;
 import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
 
+import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.Position;
+
 import org.firstinspires.ftc.teamcode.data.Config;
 
 import java.util.List;
@@ -34,7 +37,7 @@ import dev.nextftc.robot.Mechanism;
  */
 public class Turret implements Mechanism {
 
-    private Turret() {}
+    public Turret() {}
 
     public final NextMotor motor = new NextMotor(RobotController.controlHub(), Config.turret);
 
@@ -75,6 +78,21 @@ public class Turret implements Mechanism {
     private long prevErrMs = 0;
 
     public State getState() { return state; }
+
+    // ---- Read by the autonomous ----
+    private boolean tagVisibleNow = false;
+    private double tagDistIn = 0;
+
+    /** A tag was in the Limelight frame on the latest loop. */
+    public boolean isTagVisible() { return tagVisibleNow; }
+
+    /** 3D camera-to-tag distance in inches (last seen tag; unaffected by the camera's tilt). */
+    public double getTagDistanceIn() { return tagDistIn; }
+
+    /** Tracking a visible tag and its error is within tolDeg. */
+    public boolean isAimed(double tolDeg) {
+        return state == State.TRACKING && tagVisibleNow && Math.abs(lastTx) < tolDeg;
+    }
     public double getLastTx() { return lastTx; }
 
     /** Turret angle in degrees; 0 = forward at power-on, positive = clockwise. */
@@ -95,6 +113,7 @@ public class Turret implements Mechanism {
     @Override
     public void periodic() {
         long now = System.currentTimeMillis();
+        tagVisibleNow = false;
 
         // Unwinding: spin back 360 degrees (same heading) to free the cables, ignoring tags
         if (state == State.UNWINDING) {
@@ -111,6 +130,7 @@ public class Turret implements Mechanism {
         }
 
         Double tx = readTagTx();
+        tagVisibleNow = tx != null;
 
         if (tx != null) {
             lastSeenMs = now;
@@ -195,7 +215,10 @@ public class Turret implements Mechanism {
                 best = t;
             }
         }
-        return best == null ? null : best.getTargetXDegrees();
+        if (best == null) return null;
+        Position pos = best.getTargetPoseCameraSpace().getPosition().toUnit(DistanceUnit.INCH);
+        tagDistIn = Math.sqrt(pos.x * pos.x + pos.y * pos.y + pos.z * pos.z);
+        return best.getTargetXDegrees();
     }
 
     /** power in [-1, 1]; positive = clockwise. Soft limits stop it driving into the cable limit. */

@@ -1,17 +1,18 @@
 package org.firstinspires.ftc.teamcode.opmodes.auto;
 
+import com.pedropathing.api.Paths;
+import com.pedropathing.api.PoseFactory;
+import com.pedropathing.follower.Follower;
 import com.pedropathing.ivy.Command;
 import com.pedropathing.ivy.commands.Commands;
 import com.pedropathing.ivy.groups.Groups;
-import com.qualcomm.hardware.limelightvision.LLResult;
-import com.qualcomm.hardware.limelightvision.LLResultTypes;
-import com.qualcomm.hardware.limelightvision.Limelight3A;
+import com.pedropathing.ivy.pedro.PedroCommands;
+import com.pedropathing.math.Pose;
 import com.qualcomm.robotcore.util.ElapsedTime;
 import com.qualcomm.robotcore.util.Range;
 
-import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
-import org.firstinspires.ftc.robotcore.external.navigation.Position;
 import org.firstinspires.ftc.teamcode.Robot;
+import org.firstinspires.ftc.teamcode.pedro.Constants;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,49 +20,60 @@ import java.util.List;
 import dev.nextftc.robot.opmode.NextAutonomous;
 import dev.nextftc.robot.opmode.NextOpMode;
 
-
 /**
- * Vision autonomous, NextFTC command style. No path following or localization.
+ * Pedro Pathing + Limelight autonomous.
  *
- *   FIRE : Limelight AprilTag pipeline. Turn until the tag is centered, set the flywheel from tag
- *          distance, and only run the intake into the shooter once aimed, in range and spun up.
- *   HUNT : Limelight detector pipeline. Drive at the biggest ball while the intake runs; spin to
- *          search when nothing is visible; stop when the intake is full.
+ *   Pedro   : knows where the robot and the goal are. Drives to the shoot spot facing the goal,
+ *             drives the ball-pickup lines, and gives a fallback distance to the goal.
+ *   Turret  : the Turret mechanism owns the Limelight. It tracks the AprilTag (and sweeps to search
+ *             when it sees none) on its own; this auto only reads its tag distance and "aimed" flag.
+ *             The tag decides WHEN to fire: only when the turret is locked on the tag, the robot is
+ *             settled, and the flywheel has spun up.
  *
- * The auto is one big Ivy command: fire, then (hunt, fire) repeated until time runs out.
+ * Fire, then (pickup, fire) repeated until time runs out.
  *
- * Limelight setup (limelight.local:5801): pipeline 0 = AprilTag, pipeline 1 = ball detector.
- * Every number in Tunables is a PLACEHOLDER to tune on the robot.
+ * Coordinates are Pedro field coordinates (inches, 0..144, heading 0 = +x). The poses below are
+ * PLACEHOLDERS: set START, GOAL, SHOOT and PICKUPS for the real BIOBUZZ field; RED = true mirrors
+ * everything left/right.
  */
 @NextAutonomous(name = "Auto")
 public class Auto extends NextOpMode {
 
-    // ---- Tunables ----
-    public static int TAG_PIPELINE = 0;
-    public static int BALL_PIPELINE = 1;
-    public static int TAG_ID = -1;                  // -1 = any tag
-    public static String BALL_CLASS = "";           // "" = any detector class
+    // ---- Field layout (PLACEHOLDERS) ----
+    public static boolean RED = false;
+    public static double FIELD = 144;
 
+    public static double START_X = 24, START_Y = 24, START_DEG = 0;
+    public static double GOAL_X = 12, GOAL_Y = 132;                  // used to face the goal + fallback distance
+    public static double SHOOT_X = 60, SHOOT_Y = 84;                 // where to shoot from
+
+    /** Each row: approach x,y,deg then end x,y,deg (drive approach -> end with the intake on). */
+    public static double[][] PICKUPS = {
+            {48, 84, 180, 20, 84, 180},
+            {48, 60, 180, 20, 60, 180},
+            {48, 36, 180, 20, 36, 180},
+    };
+
+    // ---- Timing ----
     public static double AUTO_SECONDS = 30;
     public static double END_BUFFER = 1.0;          // stop starting new things this close to the end
-    public static int MAX_CYCLES = 6;               // upper bound on hunt+fire repeats (time cuts it short)
+    public static int MAX_CYCLES = 6;               // upper bound on pickup+fire repeats
 
-    // aiming
-    public static double AIM_KP = 0.02;             // turn power per degree of tag error
-    public static double AIM_MAX_TURN = 0.35;
-    public static double AIM_TOLERANCE_DEG = 2.0;
-    public static double MIN_FIRE_DIST_M = 0.8;     // fire window (camera to tag)
-    public static double MAX_FIRE_DIST_M = 3.0;
-    public static double SEARCH_TURN = 0.25;
+    public static double TURRET_TOL_DEG = 1.5;      // "locked on the tag"
 
-    // flywheel (open-loop throttle 0..1, so spin-up is judged by time, not measured speed)
-    public static double FLY_BASE = 0.55;
-    public static double FLY_PER_METER = 0.08;
+    // ---- Firing readiness ----
+    public static double ROBOT_HEAD_TOL_DEG = 5.0;  // body only has to face the goal roughly; the turret fine-aims
+    public static double POS_TOL_IN = 1.5;
+    public static double MIN_FIRE_DIST_IN = 30, MAX_FIRE_DIST_IN = 130;
+    public static double READY_HOLD_S = 0.15;
+
+    // flywheel (open-loop throttle 0..1 vs distance in inches, so spin-up is judged by time)
+    public static double FLY_BASE = 0.45;
+    public static double FLY_PER_INCH = 0.004;
     public static double FLY_MIN = 0.30;
     public static double FLY_MAX = 1.0;
-    public static double FLY_DEADBAND = 0.02;       // ignore setpoint jitter smaller than this
-    public static double FLY_SETTLE_S = 1.2;        // setpoint must be stable this long before firing
-    public static double READY_HOLD_S = 0.15;       // aimed + in range + settled for this long to fire
+    public static double FLY_DEADBAND = 0.02;
+    public static double FLY_SETTLE_S = 1.2;
 
     // firing: the intake pushes the piece into the flywheel
     public static double FEED_TIME_S = 0.35;
@@ -69,30 +81,21 @@ public class Auto extends NextOpMode {
     public static int SHOTS_PER_CYCLE = 4;
     public static double FIRE_TIMEOUT_S = 6.0;
 
-    // ball hunting
-    public static double HUNT_FORWARD = 0.4;
-    public static double HUNT_TURN_KP = 0.02;
-    public static double HUNT_MAX_TURN = 0.4;
-    public static double HUNT_TURN_ONLY_DEG = 18;   // ball further off than this: rotate in place first
-    public static double LOST_GRACE_S = 0.5;        // keep rolling this long after the ball leaves view
-    public static double HUNT_TIMEOUT_S = 12.0;
-
     private final Robot robot;
-    private Limelight3A limelight;
+    private Follower follower;
+    private final PoseFactory rad = PoseFactory.radians();
+    private final PoseFactory deg = PoseFactory.degrees();
 
     private final ElapsedTime match = new ElapsedTime();
     private final ElapsedTime cycleTimer = new ElapsedTime();
     private final ElapsedTime flyTimer = new ElapsedTime();
     private final ElapsedTime readyTimer = new ElapsedTime();
     private final ElapsedTime feedTimer = new ElapsedTime();
-    private final ElapsedTime huntTimer = new ElapsedTime();
-    private final ElapsedTime sinceSeen = new ElapsedTime();
 
     private int shots = 0;
-    private boolean aimed = false, inRange = false, wasReady = false, fireOk = false;
+    private boolean fireOk = false, wasReady = false, pickupDone = false;
     private double flyCmd = 0;
-    private double lastTurn = 0;
-    private final double searchDir = 1;
+    private Pose aimPose = null;
 
     public Auto(Robot robot) {
         super(robot);
@@ -101,25 +104,49 @@ public class Auto extends NextOpMode {
 
     @Override
     public void start() {
-        limelight = hardwareMap.get(Limelight3A.class, "limelight");
-        limelight.setPollRateHz(100);
-        limelight.start();
+        follower = Constants.create(hardwareMap);
+        follower.setPose(P(START_X, START_Y, START_DEG));
+        follower.update();
+
         match.reset();
 
         List<Command> steps = new ArrayList<>();
         steps.add(fireCycle());                                   // shoot the preload first
         for (int i = 0; i < MAX_CYCLES; i++) {
             steps.add(Commands.conditional(this::timeOk,
-                    Groups.sequential(huntCycle(), fireCycle()),
+                    Groups.sequential(pickupCycle(i), fireCycle()),
                     Commands.instant(() -> { })));
         }
         steps.add(Commands.instant(this::stopAll));
         Groups.sequential(steps.toArray(new Command[0])).schedule();
     }
 
+    /** Runs every loop: localization + telemetry (the Turret tracks the tag in its own periodic). */
+    @Override
+    public void periodic() {
+        if (follower == null) return;
+        follower.update();
+
+        Pose p = follower.pose();
+        log("Pose", String.format("x=%.1f y=%.1f h=%.0f deg", p.x(), p.y(), Math.toDegrees(p.heading())));
+        log("Turret", robot.turret.getState() + (robot.turret.isTagVisible()
+                ? String.format(" tx=%.1f dist=%.1f in", robot.turret.getLastTx(), robot.turret.getTagDistanceIn())
+                : " no tag"));
+        log("Goal dist by pose (in)", String.format("%.1f", distToGoal(p)));
+        log("Shots", shots);
+        log("Intake", robot.Intake.getCount() + "/" + robot.Intake.CAPACITY);
+    }
+
     @Override
     public void end() {
         stopAll();
+    }
+
+    // ------------------------------------------------------------------ TAG
+
+    /** Distance for the flywheel: the tag's measured distance, or the pose-based one if the tag is lost. */
+    private double shotDistIn() {
+        return robot.turret.isTagVisible() ? robot.turret.getTagDistanceIn() : distToGoal(follower.pose());
     }
 
     // ------------------------------------------------------------------ FIRE
@@ -128,18 +155,18 @@ public class Auto extends NextOpMode {
         List<Command> steps = new ArrayList<>();
         steps.add(robot.Intake.stop());
         steps.add(Commands.instant(() -> {
-            setPipeline(TAG_PIPELINE);
             shots = 0;
             wasReady = false;
             cycleTimer.reset();
         }));
+        // drive to the shoot spot, body already facing the goal so the tag is in the turret's range
+        steps.add(Commands.lazy(() -> followTo(shootPose())).until(() -> !timeOk()));
         for (int i = 0; i < SHOTS_PER_CYCLE; i++) {
             steps.add(Commands.conditional(this::canShoot, shootOne(), Commands.instant(() -> { })));
         }
         steps.add(Commands.instant(() -> {
             robot.flywheel.stop();
             flyCmd = 0;
-            robot.drive.stop();
             robot.Intake.resetCount();                            // shots also trip the beam break
         }));
         return Groups.sequential(steps.toArray(new Command[0]));
@@ -148,14 +175,18 @@ public class Auto extends NextOpMode {
     private Command shootOne() {
         return Groups.sequential(
                 Commands.instant(() -> { fireOk = false; wasReady = false; }),
-                // aim and spin up until ready (or the cycle times out)
-                Commands.infinite(this::aimStep).until(() -> {
-                    if (wasReady && readyTimer.seconds() >= READY_HOLD_S) { fireOk = true; return true; }
+                // hold position facing the goal while the turret locks on and the flywheel spins up
+                Commands.lazy(() -> {
+                    Pose cur = follower.pose();
+                    aimPose = rad.of(cur.x(), cur.y(), headingToGoal(cur));
+                    return PedroCommands.hold(follower, aimPose);
+                }).until(() -> {
+                    if (isReady()) { fireOk = true; return true; }
                     return cycleExpired();
                 }),
                 Commands.conditional(() -> fireOk,
                         Groups.sequential(
-                                Commands.instant(() -> { robot.drive.stop(); feedTimer.reset(); }),
+                                Commands.instant(() -> feedTimer.reset()),
                                 robot.Intake.run().until(() -> feedTimer.seconds() >= FEED_TIME_S),
                                 robot.Intake.stop(),
                                 Commands.instant(() -> { shots++; feedTimer.reset(); }),
@@ -164,37 +195,27 @@ public class Auto extends NextOpMode {
                         Commands.instant(() -> { })));
     }
 
-    /** One loop of aiming: turn toward the tag, set the flywheel from distance, track "ready". */
-    private void aimStep() {
-        LLResultTypes.FiducialResult tag = currentTag();
-        if (tag == null) {
-            // No tag: spin slowly to find one, keep the flywheel warm.
-            robot.drive.setPowers(0, 0, searchDir * SEARCH_TURN);
-            setFlywheel(FLY_BASE);
-            aimed = false;
-            inRange = false;
-            wasReady = false;
-            log("Fire", "searching for tag");
-            return;
-        }
+    /** Tag seen and centered, robot settled, in range, flywheel spun up, all held for READY_HOLD_S. */
+    private boolean isReady() {
+        double dist = shotDistIn();
+        setFlywheel(FLY_BASE + FLY_PER_INCH * dist);
 
-        double tx = tag.getTargetXDegrees();
-        double dist = tagDistanceM(tag);
-        setFlywheel(FLY_BASE + FLY_PER_METER * dist);
+        if (aimPose == null) return false;
+        Pose cur = follower.pose();
+        double posErr = Math.hypot(cur.x() - aimPose.x(), cur.y() - aimPose.y());
+        double headErr = Math.abs(wrap(cur.heading() - aimPose.heading()));
 
-        // Limelight tx is + when the target is to the right; CCW is +, so negate.
-        aimed = Math.abs(tx) < AIM_TOLERANCE_DEG;
-        double turn = aimed ? 0 : Range.clip(-tx * AIM_KP, -AIM_MAX_TURN, AIM_MAX_TURN);
-        robot.drive.setPowers(0, 0, turn);
+        boolean aimed = robot.turret.isAimed(TURRET_TOL_DEG);
+        boolean settled = posErr < POS_TOL_IN && headErr < Math.toRadians(ROBOT_HEAD_TOL_DEG);
+        boolean inRange = dist >= MIN_FIRE_DIST_IN && dist <= MAX_FIRE_DIST_IN;
+        boolean spunUp = flyTimer.seconds() >= FLY_SETTLE_S;
 
-        inRange = dist >= MIN_FIRE_DIST_M && dist <= MAX_FIRE_DIST_M;
-        boolean ok = aimed && inRange && flyTimer.seconds() >= FLY_SETTLE_S;
+        boolean ok = aimed && settled && inRange && spunUp;
         if (ok && !wasReady) readyTimer.reset();
         wasReady = ok;
 
-        log("Tag tx / dist", String.format("%.1f deg / %.2f m", tx, dist));
-        log("aimed / range / spun up", aimed + " / " + inRange + " / " + (flyTimer.seconds() >= FLY_SETTLE_S));
-        log("Shots", shots);
+        log("Ready", "aimed=" + aimed + " settled=" + settled + " range=" + inRange + " spun=" + spunUp);
+        return ok && readyTimer.seconds() >= READY_HOLD_S;
     }
 
     private void setFlywheel(double throttle) {
@@ -210,98 +231,70 @@ public class Auto extends NextOpMode {
 
     private boolean cycleExpired() { return cycleTimer.seconds() >= FIRE_TIMEOUT_S || !timeOk(); }
 
-    private LLResultTypes.FiducialResult currentTag() {
-        LLResult r = latest(TAG_PIPELINE);
-        if (r == null) return null;
-        for (LLResultTypes.FiducialResult fr : r.getFiducialResults()) {
-            if (TAG_ID < 0 || fr.getFiducialId() == TAG_ID) return fr;
-        }
-        return null;
-    }
+    // ------------------------------------------------------------------ PICKUP
 
-    /** Straight-line camera-to-tag distance in meters (verify against a tape measure). */
-    private double tagDistanceM(LLResultTypes.FiducialResult tag) {
-        Position p = tag.getTargetPoseCameraSpace().getPosition().toUnit(DistanceUnit.METER);
-        return Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
-    }
-
-    // ------------------------------------------------------------------ HUNT
-
-    private Command huntCycle() {
+    private Command pickupCycle(int i) {
+        double[] a = PICKUPS[i % PICKUPS.length];
         return Groups.sequential(
                 Commands.instant(() -> {
-                    setPipeline(BALL_PIPELINE);
                     robot.flywheel.stop();
                     flyCmd = 0;
                     robot.Intake.resetCount();
-                    huntTimer.reset();
-                    sinceSeen.reset();
-                    lastTurn = 0;
+                    pickupDone = false;
                 }),
-                // intake runs while the drive chases the ball; both end together
+                // intake runs the whole way; the drive finishes the line (or stops early if full)
                 Groups.parallel(
-                        robot.Intake.run().until(this::huntDone),
-                        Commands.infinite(this::huntStep).until(this::huntDone)),
-                Commands.instant(() -> robot.drive.stop()));
+                        robot.Intake.run().until(() -> pickupDone || pickupAbort()),
+                        Groups.sequential(
+                                Commands.lazy(() -> followTo(P(a[0], a[1], a[2]))).until(this::pickupAbort),
+                                Commands.lazy(() -> followTo(P(a[3], a[4], a[5]))).until(this::pickupAbort),
+                                Commands.instant(() -> pickupDone = true))));
     }
 
-    private boolean huntDone() {
-        return robot.Intake.isFull() || huntTimer.seconds() >= HUNT_TIMEOUT_S || !timeOk();
+    private boolean pickupAbort() { return robot.Intake.isFull() || !timeOk(); }
+
+    // ------------------------------------------------------------------ pose helpers
+
+    /** Straight line from wherever the robot is now to the target pose, turning linearly. */
+    private Command followTo(Pose target) {
+        Pose cur = follower.pose();
+        return PedroCommands.follow(follower, Paths.line(cur, target).linear(cur, target));
     }
 
-    private void huntStep() {
-        LLResultTypes.DetectorResult ball = bestBall();
-        double fwd, turn;
-        if (ball != null) {
-            sinceSeen.reset();
-            double tx = ball.getTargetXDegrees();
-            turn = Range.clip(-tx * HUNT_TURN_KP, -HUNT_MAX_TURN, HUNT_MAX_TURN);
-            lastTurn = turn;
-            // Rotate first if it's far off center, otherwise drive at it while correcting.
-            fwd = Math.abs(tx) > HUNT_TURN_ONLY_DEG ? 0 : HUNT_FORWARD;
-            log("Ball", String.format("tx=%.1f ty=%.1f area=%.2f", tx, ball.getTargetYDegrees(), ball.getTargetArea()));
-        } else if (sinceSeen.seconds() < LOST_GRACE_S) {
-            // Probably in the camera's blind spot right in front of the intake: keep rolling.
-            fwd = HUNT_FORWARD;
-            turn = lastTurn * 0.5;
-            log("Ball", "lost, coasting");
-        } else {
-            fwd = 0;
-            turn = searchDir * SEARCH_TURN;
-            log("Ball", "searching");
-        }
-        robot.drive.setPowers(fwd, 0, turn);
-        log("Intake", robot.Intake.getCount() + "/" + robot.Intake.CAPACITY);
+    /** Shoot spot with the body heading pointed at the goal. */
+    private Pose shootPose() {
+        Pose spot = P(SHOOT_X, SHOOT_Y, 0);
+        return rad.of(spot.x(), spot.y(), headingToGoal(spot));
     }
 
-    private LLResultTypes.DetectorResult bestBall() {
-        LLResult r = latest(BALL_PIPELINE);
-        if (r == null) return null;
-        LLResultTypes.DetectorResult best = null;
-        for (LLResultTypes.DetectorResult d : r.getDetectorResults()) {
-            if (!BALL_CLASS.isEmpty() && !BALL_CLASS.equals(d.getClassName())) continue;
-            if (best == null || d.getTargetArea() > best.getTargetArea()) best = d; // biggest = closest
-        }
-        return best;
+    private double goalX() { return RED ? FIELD - GOAL_X : GOAL_X; }
+
+    /** Body heading (radians) that points the robot front at the goal from the given pose. */
+    private double headingToGoal(Pose from) {
+        return Math.atan2(GOAL_Y - from.y(), goalX() - from.x());
     }
 
-    // ------------------------------------------------------------------ helpers
-
-    private void setPipeline(int p) {
-        limelight.pipelineSwitch(p);
+    private double distToGoal(Pose from) {
+        return Math.hypot(goalX() - from.x(), GOAL_Y - from.y());
     }
 
-    /** Latest result, only if it came from the pipeline we want (ignores stale frames right after a switch). */
-    private LLResult latest(int pipeline) {
-        LLResult r = limelight.getLatestResult();
-        if (r == null || !r.isValid() || r.getPipelineIndex() != pipeline) return null;
-        return r;
+    /** Pose in degrees, mirrored across the field for the red side. */
+    private Pose P(double x, double y, double headingDeg) {
+        if (RED) { x = FIELD - x; headingDeg = 180 - headingDeg; }
+        return deg.of(x, y, headingDeg);
     }
+
+    private static double wrap(double a) {
+        while (a > Math.PI) a -= 2 * Math.PI;
+        while (a < -Math.PI) a += 2 * Math.PI;
+        return a;
+    }
+
+    // ------------------------------------------------------------------ misc
 
     private boolean timeOk() { return AUTO_SECONDS - match.seconds() > END_BUFFER; }
 
     private void stopAll() {
-        robot.drive.stop();
         robot.flywheel.stop();
         robot.Intake.halt();
     }
