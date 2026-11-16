@@ -80,6 +80,11 @@ public class Turret implements Mechanism {
     public State getState() { return state; }
 
     // ---- Read by the autonomous ----
+    private int minTagId = -1, maxTagId = -1;
+
+    /** Only track tags with an ID in [min, max] (e.g. red 30-37, blue 38-45). Negative min = any tag. */
+    public void setTagIdRange(int min, int max) { minTagId = min; maxTagId = max; }
+
     private boolean tagVisibleNow = false;
     private double tagDistIn = 0;
 
@@ -211,6 +216,7 @@ public class Turret implements Mechanism {
         LLResultTypes.FiducialResult best = null;
         for (LLResultTypes.FiducialResult t : tags) {
             if (TARGET_TAG_ID != -1 && t.getFiducialId() != TARGET_TAG_ID) continue;
+            if (minTagId >= 0 && (t.getFiducialId() < minTagId || t.getFiducialId() > maxTagId)) continue;
             if (best == null || Math.abs(t.getTargetXDegrees()) < Math.abs(best.getTargetXDegrees())) {
                 best = t;
             }

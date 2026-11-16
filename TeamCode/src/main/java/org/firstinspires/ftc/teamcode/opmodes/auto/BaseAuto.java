@@ -21,55 +21,61 @@ import dev.nextftc.robot.opmode.NextAutonomous;
 import dev.nextftc.robot.opmode.NextOpMode;
 
 /**
- * Pedro Pathing + Limelight autonomous.
+ * BIOBUZZ autonomous: Pedro Pathing for position, the Turret mechanism (Limelight) for aiming.
  *
- *   Pedro   : knows where the robot and the goal are. Drives to the shoot spot facing the goal,
- *             drives the ball-pickup lines, and gives a fallback distance to the goal.
- *   Turret  : the Turret mechanism owns the Limelight. It tracks the AprilTag (and sweeps to search
- *             when it sees none) on its own; this auto only reads its tag distance and "aimed" flag.
- *             The tag decides WHEN to fire: only when the turret is locked on the tag, the robot is
- *             settled, and the flywheel has spun up.
+ * Game facts this is built on (manual TU09):
+ *   - The target is the UPWARD-FACING CELL of your own HIVE (HIVE TIP = 20 pts, LEAVE = 3, PARK = 5).
+ *     The AprilTag cluster sits on the bottom of each CELL, so the tag the turret locks onto IS the
+ *     target cell. Red tags are 30-37, blue 38-45; the cell that is up has its tags facing the floor.
+ *   - You start touching the wall, on your own half, with 4 POLLEN preloaded. LEAVE = leave the wall.
+ *     PARK = end AUTO at least partly inside your own LOADING ZONE.
+ *   - During AUTO stay on your own half (G402). Pollen to collect: your GARDEN (corner strip along
+ *     the wall, 4 pollen) and the retrieval slots at the bottom of the FLOWERS on your half.
  *
- * Fire, then (pickup, fire) repeated until time runs out.
+ * Plan: drive to the shoot spot beside the HIVE, hold, let the turret lock on the tag, fire when
+ * aimed / settled / spun up; then (collect, fire) repeated; reserve the last PARK_RESERVE_S to PARK.
  *
- * Coordinates are Pedro field coordinates (inches, 0..144, heading 0 = +x). The poses below are
- * PLACEHOLDERS: set GOAL and the START / SHOOT / PICKUPS for each side on the BLUE alliance;
- * the red autos rotate everything 180 degrees about the field centre
- * (the field is rotationally symmetric, not mirror-symmetric). Run one of the four subclasses (Blue/Red x
- * Scoring/Audience side), not this base.
+ * Coordinates are Pedro map coordinates (inches, origin bottom-left, +x right, +y up, ~141.5 across,
+ * read off the visualizer). Everything is written for the BLUE alliance; RED is the same layout
+ * rotated 180 degrees about the field centre (the field is rotationally symmetric). Values marked
+ * "guess" are NOT measured. Run one of the four subclasses, not this base.
  */
 public abstract class BaseAuto extends NextOpMode {
 
-    // ---- Field layout (PLACEHOLDERS, written for the BLUE side) ----
-    public static double FIELD = 141.5;   // measured off the Pedro visualizer map (square, 0..~141.5 in)
+    // ---- Field layout (BLUE alliance; red = rotated 180 about the centre) ----
+    public static double FIELD = 141.5;                              // map extent, measured on the visualizer
 
-    // Origin is the bottom-left corner of the Pedro map, +x right, +y up. Blue start spots are guessed
-    // from the map: the blue stripe on the top wall (x 119-141) and the blue box on the right wall
-    // (y 23-46). NOT confirmed: replace with the real numbers.
-    public static double GOAL_X = 132, GOAL_Y = 132;                 // used to face the goal + fallback distance
+    // Blue HIVE (frame x 72-95, y 45-96). Aim the body at its centre; the turret fine-aims on the tag.
+    public static double GOAL_X = 84, GOAL_Y = 70;
 
-    // Scoring side (starts near the goals)
-    public static double[] START_SCORING = {130, 135, 270};          // x, y, heading deg
-    public static double[] SHOOT_SCORING = {100, 100};               // x, y (heading is computed from the goal)
-    /** Each row: approach x,y,deg then end x,y,deg (drive approach -> end with the intake on). */
-    public static double[][] PICKUPS_SCORING = {
-            {96, 96, 0, 120, 96, 0},
-            {96, 72, 0, 120, 72, 0},
-            {96, 48, 0, 120, 48, 0},
-    };
+    // One shoot spot beside the hive, about equidistant from both cells so it works before and after
+    // the first tip (cells are near (84,85) and (84,56)). guess: tune the distance to your shooter.
+    public static double[] SHOOT = {112, 70};
 
-    // Audience side (starts on the far side from the goals)
-    public static double[] START_AUDIENCE = {125, 35, 180};
-    public static double[] SHOOT_AUDIENCE = {96, 48};
-    public static double[][] PICKUPS_AUDIENCE = {
-            {96, 36, 0, 120, 36, 0},
-            {96, 60, 0, 120, 60, 0},
-            {96, 84, 0, 120, 84, 0},
-    };
+    // Starts: touching the wall, own half (x > 71), outside the LOADING ZONE and clear of the FLOWERS.
+    // x, y, heading deg. guess.
+    public static double[] START_AUDIENCE = {118, 9, 90};            // bottom (audience) wall
+    public static double[] START_REAR = {100, 132, 270};             // top (rear) wall, beside the GARDEN
+
+    // PARK: partly inside the blue LOADING ZONE (right wall, y 23-46, 11 in deep). guess.
+    public static double[] PARK = {126, 35, 0};
+    public static double PARK_RESERVE_S = 5.0;                       // time kept free at the end to drive there
+
+    /**
+     * Pickup lines: approach x,y,deg then end x,y,deg, driven with the intake on, nose toward the wall
+     * the pollen is against. GARDEN = 4 pollen in a line along the top wall from the right corner.
+     * FLOWER lines drive at the bottom retrieval slot (3.5 in tall); mechanical fit not verified.
+     */
+    public static double[] GARDEN = {135, 120, 90, 135, 131, 90};
+    public static double[] FLOWER_RIGHT = {118, 95, 0, 130, 95, 0};  // flower on the right wall (y~95)
+    public static double[] FLOWER_BOTTOM = {94, 24, 270, 94, 11, 270}; // flower on the bottom wall (x~94)
+
+    public static double[][] PICKUPS_REAR = {GARDEN, FLOWER_RIGHT, FLOWER_BOTTOM};
+    public static double[][] PICKUPS_AUDIENCE = {FLOWER_BOTTOM, FLOWER_RIGHT, GARDEN};
 
     // ---- Timing ----
     public static double AUTO_SECONDS = 30;
-    public static double END_BUFFER = 1.0;          // stop starting new things this close to the end
+    public static double END_BUFFER = 5.0;          // stop starting new things this close to the end (= time to PARK)
     public static int MAX_CYCLES = 6;               // upper bound on pickup+fire repeats
 
     public static double TURRET_TOL_DEG = 1.5;      // "locked on the tag"
@@ -123,9 +129,12 @@ public abstract class BaseAuto extends NextOpMode {
     @Override
     public void start() {
         follower = Constants.create(hardwareMap);
-        double[] st = audience ? START_AUDIENCE : START_SCORING;
+        double[] st = audience ? START_AUDIENCE : START_REAR;
         follower.setPose(P(st[0], st[1], st[2]));
         follower.update();
+
+        // Only lock onto our own alliance's tags (red 30-37, blue 38-45), never the opponent's hive.
+        robot.turret.setTagIdRange(red ? 30 : 38, red ? 37 : 45);
 
         match.reset();
 
@@ -136,6 +145,10 @@ public abstract class BaseAuto extends NextOpMode {
                     Groups.sequential(pickupCycle(i), fireCycle()),
                     Commands.instant(() -> { })));
         }
+        // LEAVE is automatic (we drove off the wall). PARK: end partly inside our LOADING ZONE.
+        steps.add(Commands.instant(() -> { robot.flywheel.stop(); flyCmd = 0; robot.Intake.halt(); }));
+        steps.add(Commands.lazy(() -> followTo(P(PARK[0], PARK[1], PARK[2])))
+                .until(() -> match.seconds() >= AUTO_SECONDS - 0.2));
         steps.add(Commands.instant(this::stopAll));
         Groups.sequential(steps.toArray(new Command[0])).schedule();
     }
@@ -255,7 +268,7 @@ public abstract class BaseAuto extends NextOpMode {
     // ------------------------------------------------------------------ PICKUP
 
     private Command pickupCycle(int i) {
-        double[][] lines = audience ? PICKUPS_AUDIENCE : PICKUPS_SCORING;
+        double[][] lines = audience ? PICKUPS_AUDIENCE : PICKUPS_REAR;
         double[] a = lines[i % lines.length];
         return Groups.sequential(
                 Commands.instant(() -> {
@@ -285,8 +298,7 @@ public abstract class BaseAuto extends NextOpMode {
 
     /** Shoot spot with the body heading pointed at the goal. */
     private Pose shootPose() {
-        double[] sh = audience ? SHOOT_AUDIENCE : SHOOT_SCORING;
-        Pose spot = P(sh[0], sh[1], 0);
+        Pose spot = P(SHOOT[0], SHOOT[1], 0);
         return rad.of(spot.x(), spot.y(), headingToGoal(spot));
     }
 
