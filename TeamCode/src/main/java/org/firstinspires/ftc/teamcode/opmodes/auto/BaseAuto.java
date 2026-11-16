@@ -33,23 +33,36 @@ import dev.nextftc.robot.opmode.NextOpMode;
  * Fire, then (pickup, fire) repeated until time runs out.
  *
  * Coordinates are Pedro field coordinates (inches, 0..144, heading 0 = +x). The poses below are
- * PLACEHOLDERS: set START, GOAL, SHOOT and PICKUPS for the real BIOBUZZ field on the BLUE side;
- * RedAuto mirrors everything left/right. Run BlueAuto or RedAuto from the Driver Station, not this base.
+ * PLACEHOLDERS: set GOAL and the START / SHOOT / PICKUPS for each side on the BLUE alliance;
+ * the red autos mirror everything left/right. Run one of the four subclasses (Blue/Red x
+ * Scoring/Audience side), not this base.
  */
 public abstract class BaseAuto extends NextOpMode {
 
     // ---- Field layout (PLACEHOLDERS, written for the BLUE side) ----
     public static double FIELD = 144;
 
-    public static double START_X = 24, START_Y = 24, START_DEG = 0;
-    public static double GOAL_X = 12, GOAL_Y = 132;                  // used to face the goal + fallback distance
-    public static double SHOOT_X = 60, SHOOT_Y = 84;                 // where to shoot from
+    // Guessed from the field diagram (blue on the right half, scoring tags along the top, audience
+    // tags along the bottom, Pedro origin bottom-left). NOT measured: replace with real numbers.
+    public static double GOAL_X = 132, GOAL_Y = 132;                 // used to face the goal + fallback distance
 
+    // Scoring side (starts near the goals)
+    public static double[] START_SCORING = {120, 128, 270};          // x, y, heading deg
+    public static double[] SHOOT_SCORING = {100, 100};               // x, y (heading is computed from the goal)
     /** Each row: approach x,y,deg then end x,y,deg (drive approach -> end with the intake on). */
-    public static double[][] PICKUPS = {
-            {48, 84, 180, 20, 84, 180},
-            {48, 60, 180, 20, 60, 180},
-            {48, 36, 180, 20, 36, 180},
+    public static double[][] PICKUPS_SCORING = {
+            {96, 96, 0, 120, 96, 0},
+            {96, 72, 0, 120, 72, 0},
+            {96, 48, 0, 120, 48, 0},
+    };
+
+    // Audience side (starts on the far side from the goals)
+    public static double[] START_AUDIENCE = {96, 12, 90};
+    public static double[] SHOOT_AUDIENCE = {96, 48};
+    public static double[][] PICKUPS_AUDIENCE = {
+            {96, 36, 0, 120, 36, 0},
+            {96, 60, 0, 120, 60, 0},
+            {96, 84, 0, 120, 84, 0},
     };
 
     // ---- Timing ----
@@ -96,17 +109,20 @@ public abstract class BaseAuto extends NextOpMode {
     private Pose aimPose = null;
 
     private final boolean red;
+    private final boolean audience;
 
-    protected BaseAuto(Robot robot, boolean red) {
+    protected BaseAuto(Robot robot, boolean red, boolean audience) {
         super(robot);
         this.robot = robot;
         this.red = red;
+        this.audience = audience;
     }
 
     @Override
     public void start() {
         follower = Constants.create(hardwareMap);
-        follower.setPose(P(START_X, START_Y, START_DEG));
+        double[] st = audience ? START_AUDIENCE : START_SCORING;
+        follower.setPose(P(st[0], st[1], st[2]));
         follower.update();
 
         match.reset();
@@ -176,12 +192,14 @@ public abstract class BaseAuto extends NextOpMode {
     private Command shootOne() {
         return Groups.sequential(
                 Commands.instant(() -> { fireOk = false; wasReady = false; }),
-                // hold position facing the goal while the turret locks on and the flywheel spins up
+                // hold position facing the goal (hold() is instant: the follower keeps holding afterwards) ...
                 Commands.lazy(() -> {
                     Pose cur = follower.pose();
                     aimPose = rad.of(cur.x(), cur.y(), headingToGoal(cur));
                     return PedroCommands.hold(follower, aimPose);
-                }).until(() -> {
+                }),
+                // ... while the turret locks on and the flywheel spins up
+                Commands.waitUntil(() -> {
                     if (isReady()) { fireOk = true; return true; }
                     return cycleExpired();
                 }),
@@ -235,7 +253,8 @@ public abstract class BaseAuto extends NextOpMode {
     // ------------------------------------------------------------------ PICKUP
 
     private Command pickupCycle(int i) {
-        double[] a = PICKUPS[i % PICKUPS.length];
+        double[][] lines = audience ? PICKUPS_AUDIENCE : PICKUPS_SCORING;
+        double[] a = lines[i % lines.length];
         return Groups.sequential(
                 Commands.instant(() -> {
                     robot.flywheel.stop();
@@ -264,7 +283,8 @@ public abstract class BaseAuto extends NextOpMode {
 
     /** Shoot spot with the body heading pointed at the goal. */
     private Pose shootPose() {
-        Pose spot = P(SHOOT_X, SHOOT_Y, 0);
+        double[] sh = audience ? SHOOT_AUDIENCE : SHOOT_SCORING;
+        Pose spot = P(sh[0], sh[1], 0);
         return rad.of(spot.x(), spot.y(), headingToGoal(spot));
     }
 
