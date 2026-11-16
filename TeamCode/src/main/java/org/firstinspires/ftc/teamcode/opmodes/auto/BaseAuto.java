@@ -33,14 +33,12 @@ import dev.nextftc.robot.opmode.NextOpMode;
  * Fire, then (pickup, fire) repeated until time runs out.
  *
  * Coordinates are Pedro field coordinates (inches, 0..144, heading 0 = +x). The poses below are
- * PLACEHOLDERS: set START, GOAL, SHOOT and PICKUPS for the real BIOBUZZ field; RED = true mirrors
- * everything left/right.
+ * PLACEHOLDERS: set START, GOAL, SHOOT and PICKUPS for the real BIOBUZZ field on the BLUE side;
+ * RedAuto mirrors everything left/right. Run BlueAuto or RedAuto from the Driver Station, not this base.
  */
-@NextAutonomous(name = "Auto")
-public class Auto extends NextOpMode {
+public abstract class BaseAuto extends NextOpMode {
 
-    // ---- Field layout (PLACEHOLDERS) ----
-    public static boolean RED = false;
+    // ---- Field layout (PLACEHOLDERS, written for the BLUE side) ----
     public static double FIELD = 144;
 
     public static double START_X = 24, START_Y = 24, START_DEG = 0;
@@ -97,9 +95,12 @@ public class Auto extends NextOpMode {
     private double flyCmd = 0;
     private Pose aimPose = null;
 
-    public Auto(Robot robot) {
+    private final boolean red;
+
+    protected BaseAuto(Robot robot, boolean red) {
         super(robot);
         this.robot = robot;
+        this.red = red;
     }
 
     @Override
@@ -267,7 +268,7 @@ public class Auto extends NextOpMode {
         return rad.of(spot.x(), spot.y(), headingToGoal(spot));
     }
 
-    private double goalX() { return RED ? FIELD - GOAL_X : GOAL_X; }
+    private double goalX() { return red ? FIELD - GOAL_X : GOAL_X; }
 
     /** Body heading (radians) that points the robot front at the goal from the given pose. */
     private double headingToGoal(Pose from) {
@@ -280,7 +281,7 @@ public class Auto extends NextOpMode {
 
     /** Pose in degrees, mirrored across the field for the red side. */
     private Pose P(double x, double y, double headingDeg) {
-        if (RED) { x = FIELD - x; headingDeg = 180 - headingDeg; }
+        if (red) { x = FIELD - x; headingDeg = 180 - headingDeg; }
         return deg.of(x, y, headingDeg);
     }
 
