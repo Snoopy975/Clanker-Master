@@ -45,12 +45,17 @@ public abstract class BaseAuto extends NextOpMode {
     // ---- Field layout (BLUE alliance; red = rotated 180 about the centre) ----
     public static double FIELD = 141.5;                              // map extent, measured on the visualizer
 
-    // Blue HIVE (frame x 72-95, y 45-96). Aim the body at its centre; the turret fine-aims on the tag.
-    public static double GOAL_X = 84, GOAL_Y = 70;
+    // Blue HIVE (frame x 72-95, y 45-96) has a CELL at each end. In this layout (blue; red is rotated) the
+    // TOP cell is the one that starts facing up. guess: cell centres, tune with the visualizer.
+    public static double[] TOP_CELL = {84, 87};
+    public static double[] BOTTOM_CELL = {84, 56};
 
-    // One shoot spot beside the hive, about equidistant from both cells so it works before and after
-    // the first tip (cells are near (84,85) and (84,56)). guess: tune the distance to your shooter.
-    public static double[] SHOOT = {112, 70};
+    // One shoot spot beside each cell. The auto goes to the top one first, checks the turret can see that
+    // cell's tag (the up cell's tag faces the floor), and moves to the other side if it can't. guess.
+    public static double[] SHOOT_TOP = {112, 92};
+    public static double[] SHOOT_BOTTOM = {112, 54};
+    public static double CHECK_TAG_S = 1.0;         // how long to wait for a tag before trying the other side
+    public static double TIP_ASSUME_S = 1.0;        // tag gone this long after a shot: assume the hive tipped
 
     // Starts: touching the wall, own half (x > 71), outside the LOADING ZONE and clear of the FLOWERS.
     // x, y, heading deg. guess.
@@ -123,6 +128,10 @@ public abstract class BaseAuto extends NextOpMode {
     private final ElapsedTime huntTimer = new ElapsedTime();
     private final ElapsedTime sinceSeen = new ElapsedTime();
     private double lastTurn = 0;
+    private final ElapsedTime checkTimer = new ElapsedTime();
+    private final ElapsedTime tagSeenTimer = new ElapsedTime();
+    private boolean upTop = true;       // which cell we believe is facing up (top = true in the blue layout)
+    private boolean lostCell = false;
 
     private int shots = 0;
     private boolean fireOk = false, wasReady = false, pickupDone = false;
@@ -171,6 +180,7 @@ public abstract class BaseAuto extends NextOpMode {
     public void periodic() {
         if (follower == null) return;
         follower.update();
+        if (robot.turret.isTagVisible()) tagSeenTimer.reset();
 
         Pose p = follower.pose();
         log("Pose", String.format("x=%.1f y=%.1f h=%.0f deg", p.x(), p.y(), Math.toDegrees(p.heading())));
@@ -205,7 +215,8 @@ public abstract class BaseAuto extends NextOpMode {
             cycleTimer.reset();
         }));
         // drive to the shoot spot, body already facing the goal so the tag is in the turret's range
-        steps.add(Commands.lazy(() -> followTo(shootPose())).until(() -> !timeOk()));
+        steps.add(goToUpCell());
+        steps.add(Commands.conditional(this::seesUpCell, Commands.instant(() -> { }), tryOtherSide()));
         for (int i = 0; i < SHOTS_PER_CYCLE; i++) {
             steps.add(Commands.conditional(this::canShoot, shootOne(), Commands.instant(() -> { })));
         }
@@ -219,7 +230,7 @@ public abstract class BaseAuto extends NextOpMode {
 
     private Command shootOne() {
         return Groups.sequential(
-                Commands.instant(() -> { fireOk = false; wasReady = false; }),
+                Commands.instant(() -> { fireOk = false; wasReady = false; lostCell = false; }),
                 // hold position facing the goal (hold() is instant: the follower keeps holding afterwards) ...
                 Commands.lazy(() -> {
                     Pose cur = follower.pose();
@@ -229,6 +240,8 @@ public abstract class BaseAuto extends NextOpMode {
                 // ... while the turret locks on and the flywheel spins up
                 Commands.waitUntil(() -> {
                     if (isReady()) { fireOk = true; return true; }
+                    // Tag vanished after we started shooting: the hive probably tipped and the other cell is up.
+                    if (shots > 0 && tagSeenTimer.seconds() >= TIP_ASSUME_S) { lostCell = true; return true; }
                     return cycleExpired();
                 }),
                 Commands.conditional(() -> fireOk,
@@ -239,7 +252,34 @@ public abstract class BaseAuto extends NextOpMode {
                                 Commands.instant(() -> { shots++; feedTimer.reset(); }),
                                 // let the flywheel recover before the next piece
                                 Commands.infinite(() -> { }).until(() -> feedTimer.seconds() >= FEED_GAP_S)),
-                        Commands.instant(() -> { })));
+                        Commands.instant(() -> { })),
+                // hive tipped: go to the other side where the cell that is now up is
+                Commands.conditional(() -> lostCell, tryOtherSide(), Commands.instant(() -> { })));
+    }
+
+    /** Drive to the shoot spot of the cell we think is up, then give the turret a moment to see its tag. */
+    private Command goToUpCell() {
+        return Groups.sequential(
+                Commands.lazy(() -> followTo(shootPose())).until(() -> !timeOk()),
+                Commands.instant(() -> checkTimer.reset()),
+                Commands.waitUntil(() -> seesUpCell() || checkTimer.seconds() >= CHECK_TAG_S));
+    }
+
+    /** Switch to the other cell's side and wait for its tag. Used when this side has no tag (not up). */
+    private Command tryOtherSide() {
+        return Groups.sequential(
+                Commands.instant(() -> { upTop = !upTop; wasReady = false; }),
+                goToUpCell());
+    }
+
+    /** The turret sees a tag that belongs to the cell we expect to be up. */
+    private boolean seesUpCell() {
+        return robot.turret.isTagVisible() && isTopTag(robot.turret.getTagId()) == upTop;
+    }
+
+    /** Which cell a tag belongs to, in the blue layout: top cell = blue 42-45 / red 34-37. */
+    private boolean isTopTag(int id) {
+        return red ? id >= 34 && id <= 37 : id >= 42 && id <= 45;
     }
 
     /** Tag seen and centered, robot settled, in range, flywheel spun up, all held for READY_HOLD_S. */
@@ -364,13 +404,14 @@ public abstract class BaseAuto extends NextOpMode {
 
     /** Shoot spot with the body heading pointed at the goal. */
     private Pose shootPose() {
-        Pose spot = P(SHOOT[0], SHOOT[1], 0);
+        double[] sp = upTop ? SHOOT_TOP : SHOOT_BOTTOM;
+        Pose spot = P(sp[0], sp[1], 0);
         return rad.of(spot.x(), spot.y(), headingToGoal(spot));
     }
 
-    private double goalX() { return red ? FIELD - GOAL_X : GOAL_X; }
+    private double goalX() { double x = upTop ? TOP_CELL[0] : BOTTOM_CELL[0]; return red ? FIELD - x : x; }
 
-    private double goalY() { return red ? FIELD - GOAL_Y : GOAL_Y; }
+    private double goalY() { double y = upTop ? TOP_CELL[1] : BOTTOM_CELL[1]; return red ? FIELD - y : y; }
 
     /** Body heading (radians) that points the robot front at the goal from the given pose. */
     private double headingToGoal(Pose from) {

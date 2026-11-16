@@ -87,6 +87,10 @@ public class Turret implements Mechanism {
 
     private boolean tagVisibleNow = false;
     private double tagDistIn = 0;
+    private int tagId = -1;
+
+    /** ID of the tag it is currently tracking (valid while isTagVisible()). */
+    public int getTagId() { return tagId; }
 
     /** A tag was in the Limelight frame on the latest loop. */
     public boolean isTagVisible() { return tagVisibleNow; }
@@ -224,6 +228,7 @@ public class Turret implements Mechanism {
         if (best == null) return null;
         Position pos = best.getTargetPoseCameraSpace().getPosition().toUnit(DistanceUnit.INCH);
         tagDistIn = Math.sqrt(pos.x * pos.x + pos.y * pos.y + pos.z * pos.z);
+        tagId = best.getFiducialId();
         return best.getTargetXDegrees();
     }
 
