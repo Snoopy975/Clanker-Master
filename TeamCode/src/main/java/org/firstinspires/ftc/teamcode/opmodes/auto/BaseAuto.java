@@ -46,14 +46,14 @@ public abstract class BaseAuto extends NextOpMode {
     public static double FIELD = 141.5;                              // map extent, measured on the visualizer
 
     // Blue HIVE (frame x 72-95, y 45-96) has a CELL at each end. In this layout (blue; red is rotated) the
-    // TOP cell is the one that starts facing up. guess: cell centres, tune with the visualizer.
-    public static double[] TOP_CELL = {84, 87};
-    public static double[] BOTTOM_CELL = {84, 56};
+    // TOP cell is the one that starts facing up (it holds the 3 staged nectar).
+    public static double[] TOP_CELL = {84, 100};      // circled on your map (blue hive, upper end)
+    public static double[] BOTTOM_CELL = {84, 42};    // circled on your map (blue hive, lower end)
 
     // One shoot spot beside each cell. The auto goes to the top one first, checks the turret can see that
     // cell's tag (the up cell's tag faces the floor), and moves to the other side if it can't. guess.
-    public static double[] SHOOT_TOP = {112, 92};
-    public static double[] SHOOT_BOTTOM = {112, 54};
+    public static double[] SHOOT_TOP = {112, 100};
+    public static double[] SHOOT_BOTTOM = {112, 42};
     public static double CHECK_TAG_S = 1.0;         // how long to wait for a tag before trying the other side
     public static double TIP_ASSUME_S = 1.0;        // tag gone this long after a shot: assume the hive tipped
 
