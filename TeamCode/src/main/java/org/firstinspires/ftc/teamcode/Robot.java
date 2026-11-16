@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode;
 
+import org.firstinspires.ftc.teamcode.mechanisms.BallCamera;
 import org.firstinspires.ftc.teamcode.mechanisms.Drive;
 import org.firstinspires.ftc.teamcode.mechanisms.Intake;
 import org.firstinspires.ftc.teamcode.mechanisms.turret.Flywheel;
@@ -16,10 +17,11 @@ public class Robot implements NextRobot {
     public final Intake Intake = new Intake();
     public final Flywheel flywheel = new Flywheel();
     public final Turret turret = new Turret();
+    public final BallCamera ballCamera = new BallCamera();
 
 
     @Override
     public Set<Mechanism> getMechanisms() {
-        return Set.of(drive, Intake, flywheel, turret);
+        return Set.of(drive, Intake, flywheel, turret, ballCamera);
     }
 }

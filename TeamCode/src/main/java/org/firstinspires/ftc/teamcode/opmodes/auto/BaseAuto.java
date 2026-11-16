@@ -80,6 +80,16 @@ public abstract class BaseAuto extends NextOpMode {
 
     public static double TURRET_TOL_DEG = 1.5;      // "locked on the tag"
 
+    // ---- Ball hunting (BallCamera: webcam, yellow pollen) once the preset pickup spots are used up ----
+    public static double HUNT_FORWARD = 0.4;
+    public static double HUNT_TURN_KP = 0.02;       // turn power per degree of bearing
+    public static double HUNT_MAX_TURN = 0.4;
+    public static double HUNT_TURN_ONLY_DEG = 18;   // ball further off than this: rotate in place first
+    public static double HUNT_SEARCH_TURN = 0.25;
+    public static double LOST_GRACE_S = 0.5;        // keep rolling this long after the ball leaves view
+    public static double HUNT_TIMEOUT_S = 8.0;
+    public static double HALF_MARGIN_IN = 4;        // stay this far inside our own half (G402)
+
     // ---- Firing readiness ----
     public static double ROBOT_HEAD_TOL_DEG = 5.0;  // body only has to face the goal roughly; the turret fine-aims
     public static double POS_TOL_IN = 1.5;
@@ -110,6 +120,9 @@ public abstract class BaseAuto extends NextOpMode {
     private final ElapsedTime flyTimer = new ElapsedTime();
     private final ElapsedTime readyTimer = new ElapsedTime();
     private final ElapsedTime feedTimer = new ElapsedTime();
+    private final ElapsedTime huntTimer = new ElapsedTime();
+    private final ElapsedTime sinceSeen = new ElapsedTime();
+    private double lastTurn = 0;
 
     private int shots = 0;
     private boolean fireOk = false, wasReady = false, pickupDone = false;
@@ -269,7 +282,8 @@ public abstract class BaseAuto extends NextOpMode {
 
     private Command pickupCycle(int i) {
         double[][] lines = audience ? PICKUPS_AUDIENCE : PICKUPS_REAR;
-        double[] a = lines[i % lines.length];
+        if (i >= lines.length) return huntCycle();                // presets used up: look for loose pollen
+        double[] a = lines[i];
         return Groups.sequential(
                 Commands.instant(() -> {
                     robot.flywheel.stop();
@@ -284,6 +298,58 @@ public abstract class BaseAuto extends NextOpMode {
                                 Commands.lazy(() -> followTo(P(a[0], a[1], a[2]))).until(this::pickupAbort),
                                 Commands.lazy(() -> followTo(P(a[3], a[4], a[5]))).until(this::pickupAbort),
                                 Commands.instant(() -> pickupDone = true))));
+    }
+
+    // ------------------------------------------------------------------ HUNT
+
+    /** Drive at the nearest yellow ball the webcam sees; spin to search; stay on our own half. */
+    private Command huntCycle() {
+        return Groups.sequential(
+                Commands.instant(() -> {
+                    robot.flywheel.stop();
+                    flyCmd = 0;
+                    robot.Intake.resetCount();
+                    huntTimer.reset();
+                    sinceSeen.reset();
+                    lastTurn = 0;
+                }),
+                Groups.parallel(
+                        robot.Intake.run().until(this::huntDone),
+                        Commands.infinite(this::huntStep).until(this::huntDone)),
+                Commands.instant(() -> follower.hold(follower.pose())));
+    }
+
+    private boolean huntDone() {
+        return robot.Intake.isFull() || huntTimer.seconds() >= HUNT_TIMEOUT_S || !timeOk()
+                || !inOwnHalf(follower.pose());
+    }
+
+    private void huntStep() {
+        double fwd, turn;
+        if (robot.ballCamera.hasBall()) {
+            sinceSeen.reset();
+            double bearing = robot.ballCamera.getBearingDeg();
+            // + bearing = ball to the right; Pedro turns CCW-positive, so negate.
+            turn = Range.clip(-bearing * HUNT_TURN_KP, -HUNT_MAX_TURN, HUNT_MAX_TURN);
+            lastTurn = turn;
+            fwd = Math.abs(bearing) > HUNT_TURN_ONLY_DEG ? 0 : HUNT_FORWARD;
+            log("Ball", String.format("bearing=%.1f deg radius=%.0f px", bearing, robot.ballCamera.getRadiusPx()));
+        } else if (sinceSeen.seconds() < LOST_GRACE_S) {
+            fwd = HUNT_FORWARD;                                    // probably under the intake: keep rolling
+            turn = lastTurn * 0.5;
+            log("Ball", "lost, coasting");
+        } else {
+            fwd = 0;
+            turn = HUNT_SEARCH_TURN;
+            log("Ball", "searching");
+        }
+        follower.manual(fwd, 0, turn);                             // robot-centric: forward, strafe left, turn CCW
+    }
+
+    /** True while the robot is still on its own half of the field (red x < centre, blue x > centre). */
+    private boolean inOwnHalf(Pose p) {
+        double xBlue = red ? FIELD - p.x() : p.x();                // fold red onto the blue layout
+        return xBlue > FIELD / 2 + HALF_MARGIN_IN;
     }
 
     private boolean pickupAbort() { return robot.Intake.isFull() || !timeOk(); }
