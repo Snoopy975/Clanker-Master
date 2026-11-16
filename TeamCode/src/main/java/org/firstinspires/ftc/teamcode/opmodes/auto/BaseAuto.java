@@ -34,20 +34,22 @@ import dev.nextftc.robot.opmode.NextOpMode;
  *
  * Coordinates are Pedro field coordinates (inches, 0..144, heading 0 = +x). The poses below are
  * PLACEHOLDERS: set GOAL and the START / SHOOT / PICKUPS for each side on the BLUE alliance;
- * the red autos mirror everything left/right. Run one of the four subclasses (Blue/Red x
+ * the red autos rotate everything 180 degrees about the field centre
+ * (the field is rotationally symmetric, not mirror-symmetric). Run one of the four subclasses (Blue/Red x
  * Scoring/Audience side), not this base.
  */
 public abstract class BaseAuto extends NextOpMode {
 
     // ---- Field layout (PLACEHOLDERS, written for the BLUE side) ----
-    public static double FIELD = 144;
+    public static double FIELD = 141.5;   // measured off the Pedro visualizer map (square, 0..~141.5 in)
 
-    // Guessed from the field diagram (blue on the right half, scoring tags along the top, audience
-    // tags along the bottom, Pedro origin bottom-left). NOT measured: replace with real numbers.
+    // Origin is the bottom-left corner of the Pedro map, +x right, +y up. Blue start spots are guessed
+    // from the map: the blue stripe on the top wall (x 119-141) and the blue box on the right wall
+    // (y 23-46). NOT confirmed: replace with the real numbers.
     public static double GOAL_X = 132, GOAL_Y = 132;                 // used to face the goal + fallback distance
 
     // Scoring side (starts near the goals)
-    public static double[] START_SCORING = {120, 128, 270};          // x, y, heading deg
+    public static double[] START_SCORING = {130, 135, 270};          // x, y, heading deg
     public static double[] SHOOT_SCORING = {100, 100};               // x, y (heading is computed from the goal)
     /** Each row: approach x,y,deg then end x,y,deg (drive approach -> end with the intake on). */
     public static double[][] PICKUPS_SCORING = {
@@ -57,7 +59,7 @@ public abstract class BaseAuto extends NextOpMode {
     };
 
     // Audience side (starts on the far side from the goals)
-    public static double[] START_AUDIENCE = {96, 12, 90};
+    public static double[] START_AUDIENCE = {125, 35, 180};
     public static double[] SHOOT_AUDIENCE = {96, 48};
     public static double[][] PICKUPS_AUDIENCE = {
             {96, 36, 0, 120, 36, 0},
@@ -290,18 +292,20 @@ public abstract class BaseAuto extends NextOpMode {
 
     private double goalX() { return red ? FIELD - GOAL_X : GOAL_X; }
 
+    private double goalY() { return red ? FIELD - GOAL_Y : GOAL_Y; }
+
     /** Body heading (radians) that points the robot front at the goal from the given pose. */
     private double headingToGoal(Pose from) {
-        return Math.atan2(GOAL_Y - from.y(), goalX() - from.x());
+        return Math.atan2(goalY() - from.y(), goalX() - from.x());
     }
 
     private double distToGoal(Pose from) {
-        return Math.hypot(goalX() - from.x(), GOAL_Y - from.y());
+        return Math.hypot(goalX() - from.x(), goalY() - from.y());
     }
 
-    /** Pose in degrees, mirrored across the field for the red side. */
+    /** Pose in degrees; for red, rotated 180 degrees about the field centre. */
     private Pose P(double x, double y, double headingDeg) {
-        if (red) { x = FIELD - x; headingDeg = 180 - headingDeg; }
+        if (red) { x = FIELD - x; y = FIELD - y; headingDeg += 180; }
         return deg.of(x, y, headingDeg);
     }
 
