@@ -128,16 +128,45 @@ public abstract class BaseAuto extends NextOpMode {
     private final boolean red;
     private final boolean audience;
 
+    // What this auto collects. The 4 "Side" autos read these from AutoOptions (Auto Setup OpMode) at start();
+    // the preset autos in the presets package fix them in their constructor.
+    private boolean garden, flowerPit, flowerAud, scoopPit, scoopAud;
+    private final boolean fromSetup;
+
+    /** Choices come from the Auto Setup OpMode (AutoOptions). */
     protected BaseAuto(Robot robot, boolean red, boolean audience) {
         super(robot);
         this.robot = robot;
         this.red = red;
         this.audience = audience;
+        this.fromSetup = true;
+    }
+
+    /** Fixed choices (preset autos). */
+    protected BaseAuto(Robot robot, boolean red, boolean audience,
+                       boolean garden, boolean flowerPit, boolean flowerAud, boolean scoopPit, boolean scoopAud) {
+        super(robot);
+        this.robot = robot;
+        this.red = red;
+        this.audience = audience;
+        this.fromSetup = false;
+        this.garden = garden;
+        this.flowerPit = flowerPit;
+        this.flowerAud = flowerAud;
+        this.scoopPit = scoopPit;
+        this.scoopAud = scoopAud;
     }
 
     @Override
     public void start() {
         follower = Constants.create(hardwareMap);
+        if (fromSetup) {
+            garden = AutoOptions.garden;
+            flowerPit = AutoOptions.flowerPit;
+            flowerAud = AutoOptions.flowerAudience;
+            scoopPit = AutoOptions.scoopPit;
+            scoopAud = AutoOptions.scoopAudience;
+        }
         paths = new Paths(follower, red, FIELD);
         follower.setPose(paths.startPose(audience));
         upTop = red;      // try the AUDIENCE-side cell first (bottom; folds to "top" in the blue layout for red); no tag -> pit side
@@ -149,14 +178,14 @@ public abstract class BaseAuto extends NextOpMode {
         match.reset();
 
         pickups.clear();
-        if (AutoOptions.garden) pickups.add(new Pick(paths.gardenStart(), paths::garden));
-        if (AutoOptions.flowerPit) pickups.add(new Pick(paths.flowerPitStart(), paths::flowerpitside));
-        if (AutoOptions.flowerAudience) pickups.add(new Pick(paths.flowerAudienceStart(), paths::floweraudienceside));
+        if (garden) pickups.add(new Pick(paths.gardenStart(), paths::garden));
+        if (flowerPit) pickups.add(new Pick(paths.flowerPitStart(), paths::flowerpitside));
+        if (flowerAud) pickups.add(new Pick(paths.flowerAudienceStart(), paths::floweraudienceside));
         // Scoops: one slot per enabled scoop; which side runs is decided when the slot is reached (chooseScoop).
         pitScoopUsed = false;
         audScoopUsed = false;
-        if (AutoOptions.scoopPit) pickups.add(new Pick(null, null, true));
-        if (AutoOptions.scoopAudience) pickups.add(new Pick(null, null, true));
+        if (scoopPit) pickups.add(new Pick(null, null, true));
+        if (scoopAud) pickups.add(new Pick(null, null, true));
         int cycles = pickups.size();
 
         List<Command> steps = new ArrayList<>();
@@ -187,7 +216,8 @@ public abstract class BaseAuto extends NextOpMode {
                 ? String.format(" tx=%.1f dist=%.1f in", robot.turret.getLastTx(), robot.turret.getTagDistanceIn())
                 : " no tag"));
         log("Goal dist by pose (in)", String.format("%.1f", distToGoal(p)));
-        log("Options", AutoOptions.summary());
+        log("Options", "garden=" + garden + " flowerPit=" + flowerPit + " flowerAud=" + flowerAud
+                + " scoopPit=" + scoopPit + " scoopAud=" + scoopAud);
         log("Shots", shots);
         log("Intake", robot.Intake.getCount() + "/" + robot.Intake.CAPACITY);
     }
@@ -333,8 +363,8 @@ public abstract class BaseAuto extends NextOpMode {
      */
     private Pick chooseScoop() {
         boolean audienceUp = red ? upTop : !upTop;
-        boolean pitOk = AutoOptions.scoopPit && !pitScoopUsed;
-        boolean audOk = AutoOptions.scoopAudience && !audScoopUsed;
+        boolean pitOk = scoopPit && !pitScoopUsed;
+        boolean audOk = scoopAud && !audScoopUsed;
         boolean pit = audienceUp ? pitOk : !audOk;
         if (pit && !pitOk) pit = false;
         if (!pit && !audOk) pit = true;
