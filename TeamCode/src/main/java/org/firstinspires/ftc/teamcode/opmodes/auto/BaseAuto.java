@@ -368,30 +368,51 @@ public abstract class BaseAuto extends NextOpMode {
     // ------------------------------------------------------------------ pose helpers
 
     /** Straight line from wherever the robot is now to the target pose, turning linearly. */
-    // ---- Obstacle avoidance: never drive a straight line through our own HIVE ----
-    // HIVE frame in the BLUE layout (red is folded onto it). Margins are how far the robot centre must stay
-    // off the frame: sides = robot half-width + slack, ends = small, so the shoot spots in front of the ends
-    // stay reachable. Tune these to your robot. Only routes around the outside (away from the centre line)
-    // so we never wander onto the other alliance's half (G402). Other field elements are NOT modelled.
-    public static double HIVE_X0 = 72, HIVE_X1 = 95, HIVE_Y0 = 45, HIVE_Y1 = 96;
-    public static double HIVE_CLEAR_SIDE = 10, HIVE_CLEAR_END = 4;
-    public static boolean HIVE_AVOID = true;      // false: drive straight lines, ignoring the hive entirely
+    // ---- Obstacle avoidance: never drive a straight line through the HIVE FRAME or a FLOWER ----
+    // The hollow inside of the hive IS usable; only the frame (two triangular legs at the two ends of the
+    // pivot axis, joined by a crossbar high up) and the four flowers are keep-out. All numbers are in
+    // inches in the BLUE layout (red is folded onto it); the layout is rotationally symmetric so the
+    // same list works for both alliances. Frame size is from the manual (49.46 wide, 38.95 deep at the
+    // base); leg thickness, flower size and the robot margin are GUESSES, tune them to your robot.
+    // The route stays on our own half and only uses corners of these boxes, so it never leaves the field.
+    public static boolean AVOID_OBSTACLES = true;   // false: straight lines, ignoring all of this
+    public static double FRAME_W = 49.46, FRAME_D = 38.95, LEG_T = 4.0;
+    public static double FLOWER_DEPTH = 10, FLOWER_WIDTH = 12;
+    public static double ROBOT_CLEAR = 10;          // keep the robot centre this far off a keep-out box
+    // flower centres along their wall: red audience (left wall) y, red pit (top wall) x
+    public static double FLOWER_RED_WALL_Y = 46, FLOWER_RED_TOP_X = 46.5;
 
     private double[] fold(double x, double y) {
         return red ? new double[]{FIELD - x, FIELD - y} : new double[]{x, y};
+    }
+
+    /** Keep-out boxes {x0,y0,x1,y1}, already inflated by ROBOT_CLEAR. */
+    private List<double[]> obstacles() {
+        double c = FIELD / 2, m = ROBOT_CLEAR, hd = FRAME_D / 2, hw = FRAME_W / 2;
+        List<double[]> o = new ArrayList<>();
+        // frame legs (triangle bases): left and right end of the pivot axis, y spans the base depth
+        o.add(new double[]{c - hw - m, c - hd - m, c - hw + LEG_T + m, c + hd + m});
+        o.add(new double[]{c + hw - LEG_T - m, c - hd - m, c + hw + m, c + hd + m});
+        // four flowers, attached to the perimeter wall (red ones from your paths, blue = rotated)
+        double d = FLOWER_DEPTH, hf = FLOWER_WIDTH / 2, ry = FLOWER_RED_WALL_Y, rx = FLOWER_RED_TOP_X;
+        o.add(new double[]{-m, ry - hf - m, d + m, ry + hf + m});                                   // red, left wall
+        o.add(new double[]{rx - hf - m, FIELD - d - m, rx + hf + m, FIELD + m});                    // red, top wall
+        o.add(new double[]{FIELD - d - m, FIELD - ry - hf - m, FIELD + m, FIELD - ry + hf + m});    // blue, right wall
+        o.add(new double[]{FIELD - rx - hf - m, -m, FIELD - rx + hf + m, d + m});                   // blue, bottom wall
+        return o;
     }
 
     private Command lineTo(Pose a, Pose b) {
         return PedroCommands.follow(follower, com.pedropathing.api.Paths.line(a, b).linear(a, b));
     }
 
-    /** Drive to target, detouring around the hive if the straight line would hit it. */
+    /** Drive to target, detouring around the frame / flowers if the straight line would hit them. */
     private Command followTo(Pose target) {
         Pose cur = follower.pose();
         double[] a = fold(cur.x(), cur.y()), b = fold(target.x(), target.y());
         List<Command> legs = new ArrayList<>();
         Pose from = cur;
-        for (double[] w : routeAroundHive(a, b)) {
+        for (double[] w : route(a, b)) {
             double[] r = fold(w[0], w[1]);
             Pose wp = deg.of(r[0], r[1], Math.toDegrees(target.heading()));
             legs.add(lineTo(from, wp));
@@ -401,36 +422,61 @@ public abstract class BaseAuto extends NextOpMode {
         return legs.size() == 1 ? legs.get(0) : Groups.sequential(legs.toArray(new Command[0]));
     }
 
-    /** Waypoints (blue layout) that keep a->b clear of the hive; empty if the direct line is already clear. */
-    private List<double[]> routeAroundHive(double[] a, double[] b) {
-        double x0 = HIVE_X0 - HIVE_CLEAR_SIDE, x1 = HIVE_X1 + HIVE_CLEAR_SIDE;
-        double y0 = HIVE_Y0 - HIVE_CLEAR_END, y1 = HIVE_Y1 + HIVE_CLEAR_END;
+    private static boolean strictlyInside(double[] p, double[] o) {
+        double e = 1e-6;
+        return p[0] > o[0] + e && p[0] < o[2] - e && p[1] > o[1] + e && p[1] < o[3] - e;
+    }
+
+    private static boolean blocked(double[] p, double[] q, List<double[]> obs) {
+        for (double[] o : obs) if (hitsRect(p, q, o[0], o[1], o[2], o[3])) return true;
+        return false;
+    }
+
+    /** Shortest clear route a->b (blue layout) through box corners; the waypoints between, or empty if direct is clear. */
+    private List<double[]> route(double[] a, double[] b) {
         List<double[]> none = new ArrayList<>();
-        if (!HIVE_AVOID) return none;
-        if (!hitsRect(a, b, x0, y0, x1, y1)) return none;
-        double[] tr = {x1, y1}, br = {x1, y0};            // outer corners (away from the centre line)
-        double[][][] options = {{tr}, {br}, {br, tr}, {tr, br}};
-        List<double[]> best = null;
-        double bestLen = Double.MAX_VALUE;
-        for (double[][] opt : options) {
-            List<double[]> pts = new ArrayList<>();
-            pts.add(a);
-            for (double[] w : opt) pts.add(w);
-            pts.add(b);
-            double len = 0;
-            boolean ok = true;
-            for (int i = 0; i + 1 < pts.size() && ok; i++) {
-                double[] p = pts.get(i), q = pts.get(i + 1);
-                if (hitsRect(p, q, x0, y0, x1, y1)) ok = false;
-                len += Math.hypot(q[0] - p[0], q[1] - p[1]);
-            }
-            if (ok && len < bestLen) {
-                bestLen = len;
-                best = new ArrayList<>();
-                for (double[] w : opt) best.add(w);
+        if (!AVOID_OBSTACLES) return none;
+        List<double[]> obs = new ArrayList<>();
+        for (double[] o : obstacles()) if (!strictlyInside(a, o) && !strictlyInside(b, o)) obs.add(o);  // we are there on purpose
+        if (!blocked(a, b, obs)) return none;
+
+        List<double[]> nodes = new ArrayList<>();
+        nodes.add(a);
+        nodes.add(b);
+        for (double[] o : obs) {
+            double[][] corners = {{o[0], o[1]}, {o[0], o[3]}, {o[2], o[1]}, {o[2], o[3]}};
+            for (double[] k : corners) {
+                if (k[0] < FIELD / 2 + 0.5 || k[0] > FIELD - 1 || k[1] < 1 || k[1] > FIELD - 1) continue; // own half, in the field
+                boolean in = false;
+                for (double[] o2 : obs) if (strictlyInside(k, o2)) in = true;
+                if (!in) nodes.add(k);
             }
         }
-        return best != null ? best : none;                // no clean detour (e.g. start inside): go direct
+        int n = nodes.size();
+        double[] dist = new double[n];
+        int[] prev = new int[n];
+        boolean[] done = new boolean[n];
+        java.util.Arrays.fill(dist, Double.MAX_VALUE);
+        java.util.Arrays.fill(prev, -1);
+        dist[0] = 0;
+        for (int it = 0; it < n; it++) {
+            int u = -1;
+            for (int i = 0; i < n; i++) if (!done[i] && (u < 0 || dist[i] < dist[u])) u = i;
+            if (u < 0 || dist[u] == Double.MAX_VALUE) break;
+            done[u] = true;
+            if (u == 1) break;
+            for (int v = 0; v < n; v++) {
+                if (done[v] || blocked(nodes.get(u), nodes.get(v), obs)) continue;
+                double d = dist[u] + Math.hypot(nodes.get(v)[0] - nodes.get(u)[0], nodes.get(v)[1] - nodes.get(u)[1]);
+                if (d < dist[v]) { dist[v] = d; prev[v] = u; }
+            }
+        }
+        if (prev[1] < 0) return none;                    // no clean route: go direct
+        List<double[]> rev = new ArrayList<>();
+        for (int v = prev[1]; v > 0; v = prev[v]) rev.add(nodes.get(v));
+        List<double[]> out = new ArrayList<>();
+        for (int i = rev.size() - 1; i >= 0; i--) out.add(rev.get(i));
+        return out;
     }
 
     /** Does segment a-b pass through the interior of the rectangle? (Liang-Barsky, strict.) */
