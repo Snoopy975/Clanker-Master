@@ -3,7 +3,7 @@ package org.firstinspires.ftc.teamcode.opmodes.auto;
 /**
  * Pre-match toggles for the autonomous. Once an auto is INITIALIZED nothing may be touched, so set these
  * first with the "Auto Setup" OpMode, press STOP, then pick the auto. They stay until the app restarts.
- * The order is always: garden, pit flower, audience flower, pit scoop, audience scoop. A disabled item is
+ * The order is always: garden, pit flower, audience flower, then the scoops (the side opposite the cell we are shooting into runs first). A disabled item is
  * skipped and the next enabled one runs, so scooping always comes last.
  */
 public final class AutoOptions {
