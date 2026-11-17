@@ -1,6 +1,5 @@
 package org.firstinspires.ftc.teamcode.opmodes.auto;
 
-import com.pedropathing.api.Paths;
 import com.pedropathing.api.PoseFactory;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.ivy.Command;
@@ -369,9 +368,86 @@ public abstract class BaseAuto extends NextOpMode {
     // ------------------------------------------------------------------ pose helpers
 
     /** Straight line from wherever the robot is now to the target pose, turning linearly. */
+    // ---- Obstacle avoidance: never drive a straight line through our own HIVE ----
+    // HIVE frame in the BLUE layout (red is folded onto it). Margins are how far the robot centre must stay
+    // off the frame: sides = robot half-width + slack, ends = small, so the shoot spots in front of the ends
+    // stay reachable. Tune these to your robot. Only routes around the outside (away from the centre line)
+    // so we never wander onto the other alliance's half (G402). Other field elements are NOT modelled.
+    public static double HIVE_X0 = 72, HIVE_X1 = 95, HIVE_Y0 = 45, HIVE_Y1 = 96;
+    public static double HIVE_CLEAR_SIDE = 10, HIVE_CLEAR_END = 4;
+
+    private double[] fold(double x, double y) {
+        return red ? new double[]{FIELD - x, FIELD - y} : new double[]{x, y};
+    }
+
+    private Command lineTo(Pose a, Pose b) {
+        return PedroCommands.follow(follower, com.pedropathing.api.Paths.line(a, b).linear(a, b));
+    }
+
+    /** Drive to target, detouring around the hive if the straight line would hit it. */
     private Command followTo(Pose target) {
         Pose cur = follower.pose();
-        return PedroCommands.follow(follower, Paths.line(cur, target).linear(cur, target));
+        double[] a = fold(cur.x(), cur.y()), b = fold(target.x(), target.y());
+        List<Command> legs = new ArrayList<>();
+        Pose from = cur;
+        for (double[] w : routeAroundHive(a, b)) {
+            double[] r = fold(w[0], w[1]);
+            Pose wp = deg.of(r[0], r[1], Math.toDegrees(target.heading()));
+            legs.add(lineTo(from, wp));
+            from = wp;
+        }
+        legs.add(lineTo(from, target));
+        return legs.size() == 1 ? legs.get(0) : Groups.sequential(legs.toArray(new Command[0]));
+    }
+
+    /** Waypoints (blue layout) that keep a->b clear of the hive; empty if the direct line is already clear. */
+    private List<double[]> routeAroundHive(double[] a, double[] b) {
+        double x0 = HIVE_X0 - HIVE_CLEAR_SIDE, x1 = HIVE_X1 + HIVE_CLEAR_SIDE;
+        double y0 = HIVE_Y0 - HIVE_CLEAR_END, y1 = HIVE_Y1 + HIVE_CLEAR_END;
+        List<double[]> none = new ArrayList<>();
+        if (!hitsRect(a, b, x0, y0, x1, y1)) return none;
+        double[] tr = {x1, y1}, br = {x1, y0};            // outer corners (away from the centre line)
+        double[][][] options = {{tr}, {br}, {br, tr}, {tr, br}};
+        List<double[]> best = null;
+        double bestLen = Double.MAX_VALUE;
+        for (double[][] opt : options) {
+            List<double[]> pts = new ArrayList<>();
+            pts.add(a);
+            for (double[] w : opt) pts.add(w);
+            pts.add(b);
+            double len = 0;
+            boolean ok = true;
+            for (int i = 0; i + 1 < pts.size() && ok; i++) {
+                double[] p = pts.get(i), q = pts.get(i + 1);
+                if (hitsRect(p, q, x0, y0, x1, y1)) ok = false;
+                len += Math.hypot(q[0] - p[0], q[1] - p[1]);
+            }
+            if (ok && len < bestLen) {
+                bestLen = len;
+                best = new ArrayList<>();
+                for (double[] w : opt) best.add(w);
+            }
+        }
+        return best != null ? best : none;                // no clean detour (e.g. start inside): go direct
+    }
+
+    /** Does segment a-b pass through the interior of the rectangle? (Liang-Barsky, strict.) */
+    private static boolean hitsRect(double[] a, double[] b, double x0, double y0, double x1, double y1) {
+        double e = 1e-6;
+        x0 += e; y0 += e; x1 -= e; y1 -= e;
+        double dx = b[0] - a[0], dy = b[1] - a[1], t0 = 0, t1 = 1;
+        double[] p = {-dx, dx, -dy, dy};
+        double[] q = {a[0] - x0, x1 - a[0], a[1] - y0, y1 - a[1]};
+        for (int i = 0; i < 4; i++) {
+            if (p[i] == 0) {
+                if (q[i] < 0) return false;
+            } else {
+                double r = q[i] / p[i];
+                if (p[i] < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+                else { if (r < t0) return false; if (r < t1) t1 = r; }
+            }
+        }
+        return t0 < t1;
     }
 
     /** Shoot spot with the body heading pointed at the goal. */
