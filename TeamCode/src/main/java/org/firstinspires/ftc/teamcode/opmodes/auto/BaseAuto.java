@@ -56,41 +56,23 @@ public abstract class BaseAuto extends NextOpMode {
     // The Limelight reads the cell's tag best from right in front of our own hive, never from between
     // the two hives. The auto goes to the top one first, checks the turret sees that cell's tag (the up
     // cell's tag faces the floor), and moves to the other end if it can't. Check the robot body clears the hive.
-    public static double[] SHOOT_TOP = {84, 100};
-    public static double[] SHOOT_BOTTOM = {84, 42};
+    public static double[] SHOOT_TOP = {78.2, 101.5};     // = your red audience-scoop end (63.3, 40.0) rotated
+    public static double[] SHOOT_BOTTOM = {81.0, 36.7};   // = your red pit-scoop end (60.5, 104.8) rotated
     public static double CHECK_TAG_S = 1.0;         // how long to wait for a tag before trying the other side
     public static double TIP_ASSUME_S = 1.0;        // tag gone this long after a shot: assume the hive tipped
-
-    // Starts: touching the wall, own half (x > 71), outside the LOADING ZONE and clear of the FLOWERS.
-    // x, y, heading deg. guess.
-    public static double[] START_AUDIENCE = {118, 9, 90};            // bottom (audience) wall
-    public static double[] START_REAR = {100, 132, 270};             // top (rear) wall, beside the GARDEN
 
     // PARK: partly inside the blue LOADING ZONE (right wall, y 23-46, 11 in deep). guess.
     public static double[] PARK = {126, 35, 0};
     public static double PARK_RESERVE_S = 5.0;                       // time kept free at the end to drive there
 
-    /**
-     * Pickup lines: approach x,y,deg then end x,y,deg, driven with the intake on, nose toward the wall
-     * the pollen is against. GARDEN = 4 pollen in a line along the top wall from the right corner.
-     * FLOWER lines drive at the bottom retrieval slot (3.5 in tall); mechanical fit not verified.
-     */
-    public static double[] GARDEN = {135, 120, 90, 135, 131, 90};
-    public static double[] FLOWER_RIGHT = {118, 95, 0, 130, 95, 0};  // flower on the right wall (y~95)
-    public static double[] FLOWER_BOTTOM = {94, 24, 270, 94, 11, 270}; // flower on the bottom wall (x~94)
-
-    /**
-     * SCOOP_HIVE: no camera, just sweep the intake around our own HIVE where pollen/nectar spills,
-     * x,y,deg triples driven in order (as many points as you like). Blue layout; guess, replace with
-     * your own path. Keep the robot body clear of the hive frame (x 72-95, y 45-96) and on our half.
-     * It ends near the bottom shoot spot so the next fire cycle starts close.
-     */
-    public static double[] SCOOP_HIVE = {108, 100, 270, 108, 70, 270, 108, 48, 270, 96, 36, 180, 84, 38, 180};
-
-    // Order: preload first, then the FLOWER, then the GARDEN, then the SCOOP around the hive.
-    // Which of these run is chosen before the match with AutoOptions ("Auto Setup" OpMode).
-    // Nearest flower first: audience start = bottom flower, rear start = right flower.
-    private final List<double[]> pickups = new ArrayList<>();
+    // Pickups come from AutoPaths (your red paths; blue is the same paths rotated 180).
+    // Order: preload first, then the FLOWER, then the GARDEN, then the SCOOP; reorder in start().
+    private static final class Pick {
+        final Pose start; final java.util.function.Supplier<com.pedropathing.paths.Path> path;
+        Pick(Pose start, java.util.function.Supplier<com.pedropathing.paths.Path> path) { this.start = start; this.path = path; }
+    }
+    private final List<Pick> pickups = new ArrayList<>();
+    private AutoPaths paths;
 
     // ---- Timing ----
     public static double AUTO_SECONDS = 30;
@@ -152,8 +134,9 @@ public abstract class BaseAuto extends NextOpMode {
     @Override
     public void start() {
         follower = Constants.create(hardwareMap);
-        double[] st = audience ? START_AUDIENCE : START_REAR;
-        follower.setPose(P(st[0], st[1], st[2]));
+        paths = new AutoPaths(red, audience, FIELD);
+        follower.setPose(paths.startPose());
+        upTop = red ? audience : !audience;      // first try the cell nearest our start (tag check fixes a wrong guess)
         follower.update();
 
         // Only lock onto our own alliance's tags (red 30-37, blue 38-45), never the opponent's hive.
@@ -162,12 +145,9 @@ public abstract class BaseAuto extends NextOpMode {
         match.reset();
 
         pickups.clear();
-        if (AutoOptions.grabFlower) {
-            if (audience) { pickups.add(FLOWER_BOTTOM); pickups.add(FLOWER_RIGHT); }
-            else { pickups.add(FLOWER_RIGHT); pickups.add(FLOWER_BOTTOM); }
-        }
-        if (AutoOptions.grabGarden) pickups.add(GARDEN);
-        if (AutoOptions.scoopHive) pickups.add(SCOOP_HIVE);
+        if (AutoOptions.grabFlower) pickups.add(new Pick(paths.flowerStart(), paths::flower));
+        if (AutoOptions.grabGarden) pickups.add(new Pick(paths.gardenStart(), paths::garden));
+        if (AutoOptions.scoopHive) pickups.add(new Pick(paths.scoopStart(), paths::scoop));
         int cycles = pickups.size();
 
         List<Command> steps = new ArrayList<>();
@@ -332,7 +312,7 @@ public abstract class BaseAuto extends NextOpMode {
     // ------------------------------------------------------------------ PICKUP
 
     private Command pickupCycle(int i) {
-        double[] a = pickups.get(i);
+        final Pick a = pickups.get(i);
         return Groups.sequential(
                 Commands.instant(() -> {
                     robot.flywheel.stop();
@@ -344,18 +324,9 @@ public abstract class BaseAuto extends NextOpMode {
                 Groups.parallel(
                         robot.Intake.run().until(() -> pickupDone || pickupAbort()),
                         Groups.sequential(
-                                driveThrough(a),
+                                Commands.lazy(() -> followTo(a.start)).until(this::pickupAbort),
+                                Commands.lazy(() -> PedroCommands.follow(follower, a.path.get())).until(this::pickupAbort),
                                 Commands.instant(() -> pickupDone = true))));
-    }
-
-    /** Drives the x,y,deg triples of a pickup line in order, stopping early if the intake is full. */
-    private Command driveThrough(double[] line) {
-        List<Command> legs = new ArrayList<>();
-        for (int k = 0; k + 2 < line.length; k += 3) {
-            final double x = line[k], y = line[k + 1], h = line[k + 2];
-            legs.add(Commands.lazy(() -> followTo(P(x, y, h))).until(this::pickupAbort));
-        }
-        return Groups.sequential(legs.toArray(new Command[0]));
     }
 
     private boolean pickupAbort() { return robot.Intake.isFull() || !timeOk(); }
