@@ -34,7 +34,7 @@ import dev.nextftc.robot.opmode.NextOpMode;
  * Plan: drive to the shoot spot in front of our own HIVE, hold, let the turret lock on the tag, fire
  * when aimed / settled / spun up (no tag on that cell: run to the other end). Then GARDEN, pit FLOWER, audience FLOWER,
  * then the SCOOPS, each followed by a fire cycle; the last PARK_RESERVE_S is PARK.
- * Which pickups run is set before the match with AutoOptions (use the "Auto Setup" OpMode).
+ * Which pickups run is fixed per preset auto (opmodes/auto/presets); scoops are always on.
  *
  * Coordinates are Pedro map coordinates (inches, origin bottom-left, +x right, +y up, ~141.5 across,
  * read off the visualizer). Everything is written for the BLUE alliance; RED is the same layout
@@ -65,7 +65,7 @@ public abstract class BaseAuto extends NextOpMode {
     public static double PARK_RESERVE_S = 5.0;                       // time kept free at the end to drive there
 
     // Pickups use your Paths.java (red as built, blue rotated 180). Fixed priority, skipping disabled ones:
-    // preload, garden, pit flower, audience flower, then scoops (always on; the up cell's tag picks the side; toggles: AutoOptions / Auto Setup).
+    // preload, garden, pit flower, audience flower, then scoops (always on; the up cell's tag picks the side).
     private static final class Pick {
         final Pose start; final java.util.function.Supplier<com.pedropathing.paths.Path> path;
         final boolean scoopSlot;       // true: which scoop to run is decided when it is reached
@@ -127,28 +127,16 @@ public abstract class BaseAuto extends NextOpMode {
     private final boolean red;
     private final boolean audience;
 
-    // What this auto collects. The 4 "Side" autos read these from AutoOptions (Auto Setup OpMode) at start();
-    // the preset autos in the presets package fix them in their constructor.
+    // What this auto collects (scoops are always on), fixed by each preset auto in its constructor.
     private boolean garden, flowerPit, flowerAud;
-    private final boolean fromSetup;
 
-    /** Choices come from the Auto Setup OpMode (AutoOptions). */
-    protected BaseAuto(Robot robot, boolean red, boolean audience) {
-        super(robot);
-        this.robot = robot;
-        this.red = red;
-        this.audience = audience;
-        this.fromSetup = true;
-    }
-
-    /** Fixed choices (preset autos). */
+    /** Choices are fixed per preset auto (see the presets package). */
     protected BaseAuto(Robot robot, boolean red, boolean audience,
                        boolean garden, boolean flowerPit, boolean flowerAud) {
         super(robot);
         this.robot = robot;
         this.red = red;
         this.audience = audience;
-        this.fromSetup = false;
         this.garden = garden;
         this.flowerPit = flowerPit;
         this.flowerAud = flowerAud;
@@ -157,11 +145,6 @@ public abstract class BaseAuto extends NextOpMode {
     @Override
     public void start() {
         follower = Constants.create(hardwareMap);
-        if (fromSetup) {
-            garden = AutoOptions.garden;
-            flowerPit = AutoOptions.flowerPit;
-            flowerAud = AutoOptions.flowerAudience;
-        }
         paths = new Paths(follower, red, FIELD);
         follower.setPose(paths.startPose(audience));
         upTop = red;      // try the AUDIENCE-side cell first (bottom; folds to "top" in the blue layout for red); no tag -> pit side
