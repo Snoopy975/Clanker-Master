@@ -375,6 +375,7 @@ public abstract class BaseAuto extends NextOpMode {
     // so we never wander onto the other alliance's half (G402). Other field elements are NOT modelled.
     public static double HIVE_X0 = 72, HIVE_X1 = 95, HIVE_Y0 = 45, HIVE_Y1 = 96;
     public static double HIVE_CLEAR_SIDE = 10, HIVE_CLEAR_END = 4;
+    public static boolean HIVE_AVOID = true;      // false: drive straight lines, ignoring the hive entirely
 
     private double[] fold(double x, double y) {
         return red ? new double[]{FIELD - x, FIELD - y} : new double[]{x, y};
@@ -405,6 +406,7 @@ public abstract class BaseAuto extends NextOpMode {
         double x0 = HIVE_X0 - HIVE_CLEAR_SIDE, x1 = HIVE_X1 + HIVE_CLEAR_SIDE;
         double y0 = HIVE_Y0 - HIVE_CLEAR_END, y1 = HIVE_Y1 + HIVE_CLEAR_END;
         List<double[]> none = new ArrayList<>();
+        if (!HIVE_AVOID) return none;
         if (!hitsRect(a, b, x0, y0, x1, y1)) return none;
         double[] tr = {x1, y1}, br = {x1, y0};            // outer corners (away from the centre line)
         double[][][] options = {{tr}, {br}, {br, tr}, {tr, br}};
