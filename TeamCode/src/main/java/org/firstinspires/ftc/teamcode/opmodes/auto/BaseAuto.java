@@ -33,8 +33,8 @@ import dev.nextftc.robot.opmode.NextOpMode;
  *     the wall, 4 pollen) and the retrieval slots at the bottom of the FLOWERS on your half.
  *
  * Plan: drive to the shoot spot in front of our own HIVE, hold, let the turret lock on the tag, fire
- * when aimed / settled / spun up (no tag on that cell: run to the other end). Then FLOWER, GARDEN,
- * then loose pollen via the webcam, each followed by a fire cycle; the last PARK_RESERVE_S is PARK.
+ * when aimed / settled / spun up (no tag on that cell: run to the other end). Then GARDEN, pit FLOWER, audience FLOWER,
+ * then the SCOOPS, each followed by a fire cycle; the last PARK_RESERVE_S is PARK.
  * Which pickups run is set before the match with AutoOptions (use the "Auto Setup" OpMode).
  *
  * Coordinates are Pedro map coordinates (inches, origin bottom-left, +x right, +y up, ~141.5 across,
@@ -65,14 +65,14 @@ public abstract class BaseAuto extends NextOpMode {
     public static double[] PARK = {126, 35, 0};
     public static double PARK_RESERVE_S = 5.0;                       // time kept free at the end to drive there
 
-    // Pickups come from AutoPaths (your red paths; blue is the same paths rotated 180).
-    // Order: preload first, then the FLOWER, then the GARDEN, then the SCOOP; reorder in start().
+    // Pickups use your Paths.java (red as built, blue rotated 180). Fixed priority, skipping disabled ones:
+    // preload, garden, pit flower, audience flower, pit scoop, audience scoop (toggles: AutoOptions / Auto Setup).
     private static final class Pick {
         final Pose start; final java.util.function.Supplier<com.pedropathing.paths.Path> path;
         Pick(Pose start, java.util.function.Supplier<com.pedropathing.paths.Path> path) { this.start = start; this.path = path; }
     }
     private final List<Pick> pickups = new ArrayList<>();
-    private AutoPaths paths;
+    private Paths paths;
 
     // ---- Timing ----
     public static double AUTO_SECONDS = 30;
@@ -134,9 +134,9 @@ public abstract class BaseAuto extends NextOpMode {
     @Override
     public void start() {
         follower = Constants.create(hardwareMap);
-        paths = new AutoPaths(red, audience, FIELD);
-        follower.setPose(paths.startPose());
-        upTop = red ? audience : !audience;      // first try the cell nearest our start (tag check fixes a wrong guess)
+        paths = new Paths(follower, red, FIELD);
+        follower.setPose(paths.startPose(audience));
+        upTop = red;      // try the AUDIENCE-side cell first (bottom; folds to "top" in the blue layout for red); no tag -> pit side
         follower.update();
 
         // Only lock onto our own alliance's tags (red 30-37, blue 38-45), never the opponent's hive.
@@ -145,9 +145,11 @@ public abstract class BaseAuto extends NextOpMode {
         match.reset();
 
         pickups.clear();
-        if (AutoOptions.grabFlower) pickups.add(new Pick(paths.flowerStart(), paths::flower));
-        if (AutoOptions.grabGarden) pickups.add(new Pick(paths.gardenStart(), paths::garden));
-        if (AutoOptions.scoopHive) pickups.add(new Pick(paths.scoopStart(), paths::scoop));
+        if (AutoOptions.garden) pickups.add(new Pick(paths.gardenStart(), paths::garden));
+        if (AutoOptions.flowerPit) pickups.add(new Pick(paths.flowerPitStart(), paths::flowerpitside));
+        if (AutoOptions.flowerAudience) pickups.add(new Pick(paths.flowerAudienceStart(), paths::floweraudienceside));
+        if (AutoOptions.scoopPit) pickups.add(new Pick(paths.scoopPitStart(), paths::scooppitside));
+        if (AutoOptions.scoopAudience) pickups.add(new Pick(paths.scoopAudienceStart(), paths::scoopaudienceside));
         int cycles = pickups.size();
 
         List<Command> steps = new ArrayList<>();

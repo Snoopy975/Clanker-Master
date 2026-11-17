@@ -4,24 +4,28 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 /**
- * Run this BEFORE the match (talk to your alliance partner first), then press STOP and select the auto.
- * gamepad1: A = flower, B = garden, X = scoop around the hive. Choices stay until the app restarts.
+ * Run this BEFORE the match, then press STOP and select the auto.
+ * gamepad1: A = garden, B = pit flower, X = audience flower, Y = pit scoop, right bumper = audience scoop.
  */
 @TeleOp(name = "Auto Setup", group = "Setup")
 public class AutoSetup extends LinearOpMode {
     @Override
     public void runOpMode() {
-        boolean a = false, b = false, x = false;
+        boolean a = false, b = false, x = false, y = false, rb = false;
         while (!isStopRequested()) {
-            if (gamepad1.a && !a) AutoOptions.grabFlower = !AutoOptions.grabFlower;
-            if (gamepad1.b && !b) AutoOptions.grabGarden = !AutoOptions.grabGarden;
-            if (gamepad1.x && !x) AutoOptions.scoopHive = !AutoOptions.scoopHive;
-            a = gamepad1.a; b = gamepad1.b; x = gamepad1.x;
+            if (gamepad1.a && !a) AutoOptions.garden = !AutoOptions.garden;
+            if (gamepad1.b && !b) AutoOptions.flowerPit = !AutoOptions.flowerPit;
+            if (gamepad1.x && !x) AutoOptions.flowerAudience = !AutoOptions.flowerAudience;
+            if (gamepad1.y && !y) AutoOptions.scoopPit = !AutoOptions.scoopPit;
+            if (gamepad1.right_bumper && !rb) AutoOptions.scoopAudience = !AutoOptions.scoopAudience;
+            a = gamepad1.a; b = gamepad1.b; x = gamepad1.x; y = gamepad1.y; rb = gamepad1.right_bumper;
 
-            telemetry.addLine("A flower | B garden | X scoop hive");
-            telemetry.addData("Flower", AutoOptions.grabFlower ? "YES" : "no");
-            telemetry.addData("Garden", AutoOptions.grabGarden ? "YES" : "no");
-            telemetry.addData("Scoop", AutoOptions.scoopHive ? "YES" : "no");
+            telemetry.addLine("A garden | B pit flower | X audience flower | Y pit scoop | RB audience scoop");
+            telemetry.addData("Garden", AutoOptions.garden ? "YES" : "no");
+            telemetry.addData("Pit flower", AutoOptions.flowerPit ? "YES" : "no");
+            telemetry.addData("Audience flower", AutoOptions.flowerAudience ? "YES" : "no");
+            telemetry.addData("Pit scoop", AutoOptions.scoopPit ? "YES" : "no");
+            telemetry.addData("Audience scoop", AutoOptions.scoopAudience ? "YES" : "no");
             telemetry.addLine("Press STOP when done, then pick the auto.");
             telemetry.update();
         }
