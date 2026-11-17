@@ -65,7 +65,7 @@ public abstract class BaseAuto extends NextOpMode {
     public static double PARK_RESERVE_S = 5.0;                       // time kept free at the end to drive there
 
     // Pickups use your Paths.java (red as built, blue rotated 180). Fixed priority, skipping disabled ones:
-    // preload, garden, pit flower, audience flower, then scoops (the side opposite the up cell first; toggles: AutoOptions / Auto Setup).
+    // preload, garden, pit flower, audience flower, then scoops (always on; the up cell's tag picks the side; toggles: AutoOptions / Auto Setup).
     private static final class Pick {
         final Pose start; final java.util.function.Supplier<com.pedropathing.paths.Path> path;
         final boolean scoopSlot;       // true: which scoop to run is decided when it is reached
@@ -76,7 +76,6 @@ public abstract class BaseAuto extends NextOpMode {
     }
     private final List<Pick> pickups = new ArrayList<>();
     private Paths paths;
-    private boolean pitScoopUsed, audScoopUsed;
 
     // ---- Timing ----
     public static double AUTO_SECONDS = 30;
@@ -130,7 +129,7 @@ public abstract class BaseAuto extends NextOpMode {
 
     // What this auto collects. The 4 "Side" autos read these from AutoOptions (Auto Setup OpMode) at start();
     // the preset autos in the presets package fix them in their constructor.
-    private boolean garden, flowerPit, flowerAud, scoopPit, scoopAud;
+    private boolean garden, flowerPit, flowerAud;
     private final boolean fromSetup;
 
     /** Choices come from the Auto Setup OpMode (AutoOptions). */
@@ -144,7 +143,7 @@ public abstract class BaseAuto extends NextOpMode {
 
     /** Fixed choices (preset autos). */
     protected BaseAuto(Robot robot, boolean red, boolean audience,
-                       boolean garden, boolean flowerPit, boolean flowerAud, boolean scoopPit, boolean scoopAud) {
+                       boolean garden, boolean flowerPit, boolean flowerAud) {
         super(robot);
         this.robot = robot;
         this.red = red;
@@ -153,8 +152,6 @@ public abstract class BaseAuto extends NextOpMode {
         this.garden = garden;
         this.flowerPit = flowerPit;
         this.flowerAud = flowerAud;
-        this.scoopPit = scoopPit;
-        this.scoopAud = scoopAud;
     }
 
     @Override
@@ -164,8 +161,6 @@ public abstract class BaseAuto extends NextOpMode {
             garden = AutoOptions.garden;
             flowerPit = AutoOptions.flowerPit;
             flowerAud = AutoOptions.flowerAudience;
-            scoopPit = AutoOptions.scoopPit;
-            scoopAud = AutoOptions.scoopAudience;
         }
         paths = new Paths(follower, red, FIELD);
         follower.setPose(paths.startPose(audience));
@@ -181,11 +176,8 @@ public abstract class BaseAuto extends NextOpMode {
         if (garden) pickups.add(new Pick(paths.gardenStart(), paths::garden));
         if (flowerPit) pickups.add(new Pick(paths.flowerPitStart(), paths::flowerpitside));
         if (flowerAud) pickups.add(new Pick(paths.flowerAudienceStart(), paths::floweraudienceside));
-        // Scoops: one slot per enabled scoop; which side runs is decided when the slot is reached (chooseScoop).
-        pitScoopUsed = false;
-        audScoopUsed = false;
-        if (scoopPit) pickups.add(new Pick(null, null, true));
-        if (scoopAud) pickups.add(new Pick(null, null, true));
+        // Scoops are always on and come last. Which side runs is decided when each one is reached (chooseScoop).
+        for (int i = 0; i < MAX_SCOOP_CYCLES; i++) pickups.add(new Pick(null, null, true));
         int cycles = pickups.size();
 
         List<Command> steps = new ArrayList<>();
@@ -216,8 +208,7 @@ public abstract class BaseAuto extends NextOpMode {
                 ? String.format(" tx=%.1f dist=%.1f in", robot.turret.getLastTx(), robot.turret.getTagDistanceIn())
                 : " no tag"));
         log("Goal dist by pose (in)", String.format("%.1f", distToGoal(p)));
-        log("Options", "garden=" + garden + " flowerPit=" + flowerPit + " flowerAud=" + flowerAud
-                + " scoopPit=" + scoopPit + " scoopAud=" + scoopAud);
+        log("Options", "garden=" + garden + " flowerPit=" + flowerPit + " flowerAud=" + flowerAud + " (scoops always on)");
         log("Shots", shots);
         log("Intake", robot.Intake.getCount() + "/" + robot.Intake.CAPACITY);
     }
@@ -356,24 +347,18 @@ public abstract class BaseAuto extends NextOpMode {
         return pickupRun(pk);
     }
 
+    public static int MAX_SCOOP_CYCLES = 4;         // scoop + fire repeats after the other pickups, until time runs out
+
     /**
-     * Whichever cell is up is the one we are shooting into; the OPPOSITE side's hive just dumped its balls, so
-     * scoop there. Audience cell up -> pit scoop, pit cell up -> audience scoop. If that scoop is disabled or
-     * already done, use the other one.
+     * The up cell's AprilTag decides the scoop: whichever cell is up is the one we are shooting into, and the
+     * OPPOSITE side's hive just dumped its balls, so scoop there. Audience cell up -> pit scoop,
+     * pit cell up -> audience scoop.
      */
     private Pick chooseScoop() {
         boolean audienceUp = red ? upTop : !upTop;
-        boolean pitOk = scoopPit && !pitScoopUsed;
-        boolean audOk = scoopAud && !audScoopUsed;
-        boolean pit = audienceUp ? pitOk : !audOk;
-        if (pit && !pitOk) pit = false;
-        if (!pit && !audOk) pit = true;
-        if (pit) {
-            pitScoopUsed = true;
-            return new Pick(paths.scoopPitStart(), paths::scooppitside);
-        }
-        audScoopUsed = true;
-        return new Pick(paths.scoopAudienceStart(), paths::scoopaudienceside);
+        return audienceUp
+                ? new Pick(paths.scoopPitStart(), paths::scooppitside)
+                : new Pick(paths.scoopAudienceStart(), paths::scoopaudienceside);
     }
 
     private Command pickupRun(final Pick a) {

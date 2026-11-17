@@ -5,9 +5,9 @@ import org.firstinspires.ftc.teamcode.opmodes.auto.BaseAuto;
 
 import dev.nextftc.robot.opmode.NextAutonomous;
 
-@NextAutonomous(name = "Red Pit Start | AudFlower")
+@NextAutonomous(name = "Red Pit Start | AudFlower + Scoops")
 public class RedPit_AudFlower extends BaseAuto {
     public RedPit_AudFlower(Robot robot) {
-        super(robot, true, false, false, false, true, false, false);
+        super(robot, true, false, false, false, true);
     }
 }
