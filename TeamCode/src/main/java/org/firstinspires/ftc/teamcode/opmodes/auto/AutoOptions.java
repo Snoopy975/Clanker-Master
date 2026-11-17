@@ -13,12 +13,12 @@ public final class AutoOptions {
     public static boolean grabFlower = true;
     /** Collect from our GARDEN after the flower. */
     public static boolean grabGarden = true;
-    /** After the preset pickups, hunt loose pollen with the webcam if there is time. */
-    public static boolean huntLoose = true;
+    /** After those, scoop around our own HIVE with the intake on (no camera). */
+    public static boolean scoopHive = true;
 
     public static String summary() {
         return "flower=" + (grabFlower ? "YES" : "no")
                 + "  garden=" + (grabGarden ? "YES" : "no")
-                + "  hunt=" + (huntLoose ? "YES" : "no");
+                + "  scoop=" + (scoopHive ? "YES" : "no");
     }
 }

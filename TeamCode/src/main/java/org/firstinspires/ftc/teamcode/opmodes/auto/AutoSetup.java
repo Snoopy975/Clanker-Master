@@ -5,7 +5,7 @@ import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 /**
  * Run this BEFORE the match (talk to your alliance partner first), then press STOP and select the auto.
- * gamepad1: A = flower, B = garden, X = hunt loose pollen. Choices stay until the app restarts.
+ * gamepad1: A = flower, B = garden, X = scoop around the hive. Choices stay until the app restarts.
  */
 @TeleOp(name = "Auto Setup", group = "Setup")
 public class AutoSetup extends LinearOpMode {
@@ -15,13 +15,13 @@ public class AutoSetup extends LinearOpMode {
         while (!isStopRequested()) {
             if (gamepad1.a && !a) AutoOptions.grabFlower = !AutoOptions.grabFlower;
             if (gamepad1.b && !b) AutoOptions.grabGarden = !AutoOptions.grabGarden;
-            if (gamepad1.x && !x) AutoOptions.huntLoose = !AutoOptions.huntLoose;
+            if (gamepad1.x && !x) AutoOptions.scoopHive = !AutoOptions.scoopHive;
             a = gamepad1.a; b = gamepad1.b; x = gamepad1.x;
 
-            telemetry.addLine("A flower | B garden | X hunt loose pollen");
+            telemetry.addLine("A flower | B garden | X scoop hive");
             telemetry.addData("Flower", AutoOptions.grabFlower ? "YES" : "no");
             telemetry.addData("Garden", AutoOptions.grabGarden ? "YES" : "no");
-            telemetry.addData("Hunt", AutoOptions.huntLoose ? "YES" : "no");
+            telemetry.addData("Scoop", AutoOptions.scoopHive ? "YES" : "no");
             telemetry.addLine("Press STOP when done, then pick the auto.");
             telemetry.update();
         }

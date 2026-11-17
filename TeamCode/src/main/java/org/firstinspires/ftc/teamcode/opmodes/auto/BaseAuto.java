@@ -79,7 +79,15 @@ public abstract class BaseAuto extends NextOpMode {
     public static double[] FLOWER_RIGHT = {118, 95, 0, 130, 95, 0};  // flower on the right wall (y~95)
     public static double[] FLOWER_BOTTOM = {94, 24, 270, 94, 11, 270}; // flower on the bottom wall (x~94)
 
-    // Order: preload first, then the FLOWER, then the GARDEN, then loose pollen (webcam) if time is left.
+    /**
+     * SCOOP_HIVE: no camera, just sweep the intake around our own HIVE where pollen/nectar spills,
+     * x,y,deg triples driven in order (as many points as you like). Blue layout; guess, replace with
+     * your own path. Keep the robot body clear of the hive frame (x 72-95, y 45-96) and on our half.
+     * It ends near the bottom shoot spot so the next fire cycle starts close.
+     */
+    public static double[] SCOOP_HIVE = {108, 100, 270, 108, 70, 270, 108, 48, 270, 96, 36, 180, 84, 38, 180};
+
+    // Order: preload first, then the FLOWER, then the GARDEN, then the SCOOP around the hive.
     // Which of these run is chosen before the match with AutoOptions ("Auto Setup" OpMode).
     // Nearest flower first: audience start = bottom flower, rear start = right flower.
     private final List<double[]> pickups = new ArrayList<>();
@@ -87,19 +95,9 @@ public abstract class BaseAuto extends NextOpMode {
     // ---- Timing ----
     public static double AUTO_SECONDS = 30;
     public static double END_BUFFER = 5.0;          // stop starting new things this close to the end (= time to PARK)
-    public static int MAX_HUNT_CYCLES = 3;          // loose-pollen hunts after the preset pickups
 
     public static double TURRET_TOL_DEG = 1.5;      // "locked on the tag"
 
-    // ---- Ball hunting (BallCamera: webcam, yellow pollen) once the preset pickup spots are used up ----
-    public static double HUNT_FORWARD = 0.4;
-    public static double HUNT_TURN_KP = 0.02;       // turn power per degree of bearing
-    public static double HUNT_MAX_TURN = 0.4;
-    public static double HUNT_TURN_ONLY_DEG = 18;   // ball further off than this: rotate in place first
-    public static double HUNT_SEARCH_TURN = 0.25;
-    public static double LOST_GRACE_S = 0.5;        // keep rolling this long after the ball leaves view
-    public static double HUNT_TIMEOUT_S = 8.0;
-    public static double HALF_MARGIN_IN = 4;        // stay this far inside our own half (G402)
 
     // ---- Firing readiness ----
     public static double ROBOT_HEAD_TOL_DEG = 5.0;  // body only has to face the goal roughly; the turret fine-aims
@@ -131,9 +129,6 @@ public abstract class BaseAuto extends NextOpMode {
     private final ElapsedTime flyTimer = new ElapsedTime();
     private final ElapsedTime readyTimer = new ElapsedTime();
     private final ElapsedTime feedTimer = new ElapsedTime();
-    private final ElapsedTime huntTimer = new ElapsedTime();
-    private final ElapsedTime sinceSeen = new ElapsedTime();
-    private double lastTurn = 0;
     private final ElapsedTime checkTimer = new ElapsedTime();
     private final ElapsedTime tagSeenTimer = new ElapsedTime();
     private boolean upTop = true;       // which cell we believe is facing up (top = true in the blue layout)
@@ -172,8 +167,8 @@ public abstract class BaseAuto extends NextOpMode {
             else { pickups.add(FLOWER_RIGHT); pickups.add(FLOWER_BOTTOM); }
         }
         if (AutoOptions.grabGarden) pickups.add(GARDEN);
-        boolean hunt = AutoOptions.huntLoose && robot.ballCamera.isAvailable();
-        int cycles = pickups.size() + (hunt ? MAX_HUNT_CYCLES : 0);
+        if (AutoOptions.scoopHive) pickups.add(SCOOP_HIVE);
+        int cycles = pickups.size();
 
         List<Command> steps = new ArrayList<>();
         steps.add(fireCycle());                                   // shoot the preload first
@@ -203,7 +198,7 @@ public abstract class BaseAuto extends NextOpMode {
                 ? String.format(" tx=%.1f dist=%.1f in", robot.turret.getLastTx(), robot.turret.getTagDistanceIn())
                 : " no tag"));
         log("Goal dist by pose (in)", String.format("%.1f", distToGoal(p)));
-        log("Options", AutoOptions.summary() + (robot.ballCamera.isAvailable() ? "" : "  (no webcam)"));
+        log("Options", AutoOptions.summary());
         log("Shots", shots);
         log("Intake", robot.Intake.getCount() + "/" + robot.Intake.CAPACITY);
     }
@@ -337,7 +332,6 @@ public abstract class BaseAuto extends NextOpMode {
     // ------------------------------------------------------------------ PICKUP
 
     private Command pickupCycle(int i) {
-        if (i >= pickups.size()) return huntCycle();              // presets used up: look for loose pollen
         double[] a = pickups.get(i);
         return Groups.sequential(
                 Commands.instant(() -> {
@@ -350,61 +344,18 @@ public abstract class BaseAuto extends NextOpMode {
                 Groups.parallel(
                         robot.Intake.run().until(() -> pickupDone || pickupAbort()),
                         Groups.sequential(
-                                Commands.lazy(() -> followTo(P(a[0], a[1], a[2]))).until(this::pickupAbort),
-                                Commands.lazy(() -> followTo(P(a[3], a[4], a[5]))).until(this::pickupAbort),
+                                driveThrough(a),
                                 Commands.instant(() -> pickupDone = true))));
     }
 
-    // ------------------------------------------------------------------ HUNT
-
-    /** Drive at the nearest yellow ball the webcam sees; spin to search; stay on our own half. */
-    private Command huntCycle() {
-        return Groups.sequential(
-                Commands.instant(() -> {
-                    robot.flywheel.stop();
-                    flyCmd = 0;
-                    robot.Intake.resetCount();
-                    huntTimer.reset();
-                    sinceSeen.reset();
-                    lastTurn = 0;
-                }),
-                Groups.parallel(
-                        robot.Intake.run().until(this::huntDone),
-                        Commands.infinite(this::huntStep).until(this::huntDone)),
-                Commands.instant(() -> follower.hold(follower.pose())));
-    }
-
-    private boolean huntDone() {
-        return robot.Intake.isFull() || huntTimer.seconds() >= HUNT_TIMEOUT_S || !timeOk()
-                || !inOwnHalf(follower.pose());
-    }
-
-    private void huntStep() {
-        double fwd, turn;
-        if (robot.ballCamera.hasBall()) {
-            sinceSeen.reset();
-            double bearing = robot.ballCamera.getBearingDeg();
-            // + bearing = ball to the right; Pedro turns CCW-positive, so negate.
-            turn = Range.clip(-bearing * HUNT_TURN_KP, -HUNT_MAX_TURN, HUNT_MAX_TURN);
-            lastTurn = turn;
-            fwd = Math.abs(bearing) > HUNT_TURN_ONLY_DEG ? 0 : HUNT_FORWARD;
-            log("Ball", String.format("bearing=%.1f deg radius=%.0f px", bearing, robot.ballCamera.getRadiusPx()));
-        } else if (sinceSeen.seconds() < LOST_GRACE_S) {
-            fwd = HUNT_FORWARD;                                    // probably under the intake: keep rolling
-            turn = lastTurn * 0.5;
-            log("Ball", "lost, coasting");
-        } else {
-            fwd = 0;
-            turn = HUNT_SEARCH_TURN;
-            log("Ball", "searching");
+    /** Drives the x,y,deg triples of a pickup line in order, stopping early if the intake is full. */
+    private Command driveThrough(double[] line) {
+        List<Command> legs = new ArrayList<>();
+        for (int k = 0; k + 2 < line.length; k += 3) {
+            final double x = line[k], y = line[k + 1], h = line[k + 2];
+            legs.add(Commands.lazy(() -> followTo(P(x, y, h))).until(this::pickupAbort));
         }
-        follower.manual(fwd, 0, turn);                             // robot-centric: forward, strafe left, turn CCW
-    }
-
-    /** True while the robot is still on its own half of the field (red x < centre, blue x > centre). */
-    private boolean inOwnHalf(Pose p) {
-        double xBlue = red ? FIELD - p.x() : p.x();                // fold red onto the blue layout
-        return xBlue > FIELD / 2 + HALF_MARGIN_IN;
+        return Groups.sequential(legs.toArray(new Command[0]));
     }
 
     private boolean pickupAbort() { return robot.Intake.isFull() || !timeOk(); }
