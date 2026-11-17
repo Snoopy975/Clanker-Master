@@ -39,7 +39,7 @@ import dev.nextftc.robot.opmode.NextOpMode;
  * Coordinates are Pedro map coordinates (inches, origin bottom-left, +x right, +y up, ~141.5 across,
  * read off the visualizer). Everything is written for the BLUE alliance; RED is the same layout
  * rotated 180 degrees about the field centre (the field is rotationally symmetric). Values marked
- * "guess" are NOT measured. Run one of the four subclasses, not this base.
+ * "guess" are NOT measured. Run one of the preset subclasses (opmodes/auto/presets), not this base.
  */
 public abstract class BaseAuto extends NextOpMode {
 
