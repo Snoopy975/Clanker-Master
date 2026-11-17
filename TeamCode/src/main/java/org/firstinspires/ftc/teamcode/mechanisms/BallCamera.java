@@ -42,12 +42,21 @@ public class BallCamera implements Mechanism {
                 .setDrawContours(true)
                 .setBlurSize(5)
                 .build();
-        portal = new VisionPortal.Builder()
-                .setCamera(ActiveOpMode.hardwareMap().get(WebcamName.class, CAMERA_NAME))
-                .setCameraResolution(new Size(WIDTH, HEIGHT))
-                .addProcessor(locator)
-                .build();
+        try {
+            portal = new VisionPortal.Builder()
+                    .setCamera(ActiveOpMode.hardwareMap().get(WebcamName.class, CAMERA_NAME))
+                    .setCameraResolution(new Size(WIDTH, HEIGHT))
+                    .addProcessor(locator)
+                    .enableLiveView(false)                       // R704.D: no Wi-Fi video stream
+                    .build();
+        } catch (Exception e) {
+            portal = null;                                       // no webcam plugged in: auto skips hunting
+            locator = null;
+        }
     }
+
+    /** The webcam was found and is running. */
+    public boolean isAvailable() { return portal != null; }
 
     @Override
     public void periodic() {

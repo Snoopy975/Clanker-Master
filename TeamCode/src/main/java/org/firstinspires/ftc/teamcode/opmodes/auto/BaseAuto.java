@@ -32,8 +32,10 @@ import dev.nextftc.robot.opmode.NextOpMode;
  *   - During AUTO stay on your own half (G402). Pollen to collect: your GARDEN (corner strip along
  *     the wall, 4 pollen) and the retrieval slots at the bottom of the FLOWERS on your half.
  *
- * Plan: drive to the shoot spot beside the HIVE, hold, let the turret lock on the tag, fire when
- * aimed / settled / spun up; then (collect, fire) repeated; reserve the last PARK_RESERVE_S to PARK.
+ * Plan: drive to the shoot spot in front of our own HIVE, hold, let the turret lock on the tag, fire
+ * when aimed / settled / spun up (no tag on that cell: run to the other end). Then FLOWER, GARDEN,
+ * then loose pollen via the webcam, each followed by a fire cycle; the last PARK_RESERVE_S is PARK.
+ * Which pickups run is set before the match with AutoOptions (use the "Auto Setup" OpMode).
  *
  * Coordinates are Pedro map coordinates (inches, origin bottom-left, +x right, +y up, ~141.5 across,
  * read off the visualizer). Everything is written for the BLUE alliance; RED is the same layout
@@ -77,13 +79,15 @@ public abstract class BaseAuto extends NextOpMode {
     public static double[] FLOWER_RIGHT = {118, 95, 0, 130, 95, 0};  // flower on the right wall (y~95)
     public static double[] FLOWER_BOTTOM = {94, 24, 270, 94, 11, 270}; // flower on the bottom wall (x~94)
 
-    public static double[][] PICKUPS_REAR = {GARDEN, FLOWER_RIGHT, FLOWER_BOTTOM};
-    public static double[][] PICKUPS_AUDIENCE = {FLOWER_BOTTOM, FLOWER_RIGHT, GARDEN};
+    // Order: preload first, then the FLOWER, then the GARDEN, then loose pollen (webcam) if time is left.
+    // Which of these run is chosen before the match with AutoOptions ("Auto Setup" OpMode).
+    // Nearest flower first: audience start = bottom flower, rear start = right flower.
+    private final List<double[]> pickups = new ArrayList<>();
 
     // ---- Timing ----
     public static double AUTO_SECONDS = 30;
     public static double END_BUFFER = 5.0;          // stop starting new things this close to the end (= time to PARK)
-    public static int MAX_CYCLES = 6;               // upper bound on pickup+fire repeats
+    public static int MAX_HUNT_CYCLES = 3;          // loose-pollen hunts after the preset pickups
 
     public static double TURRET_TOL_DEG = 1.5;      // "locked on the tag"
 
@@ -162,9 +166,18 @@ public abstract class BaseAuto extends NextOpMode {
 
         match.reset();
 
+        pickups.clear();
+        if (AutoOptions.grabFlower) {
+            if (audience) { pickups.add(FLOWER_BOTTOM); pickups.add(FLOWER_RIGHT); }
+            else { pickups.add(FLOWER_RIGHT); pickups.add(FLOWER_BOTTOM); }
+        }
+        if (AutoOptions.grabGarden) pickups.add(GARDEN);
+        boolean hunt = AutoOptions.huntLoose && robot.ballCamera.isAvailable();
+        int cycles = pickups.size() + (hunt ? MAX_HUNT_CYCLES : 0);
+
         List<Command> steps = new ArrayList<>();
         steps.add(fireCycle());                                   // shoot the preload first
-        for (int i = 0; i < MAX_CYCLES; i++) {
+        for (int i = 0; i < cycles; i++) {
             steps.add(Commands.conditional(this::timeOk,
                     Groups.sequential(pickupCycle(i), fireCycle()),
                     Commands.instant(() -> { })));
@@ -190,6 +203,7 @@ public abstract class BaseAuto extends NextOpMode {
                 ? String.format(" tx=%.1f dist=%.1f in", robot.turret.getLastTx(), robot.turret.getTagDistanceIn())
                 : " no tag"));
         log("Goal dist by pose (in)", String.format("%.1f", distToGoal(p)));
+        log("Options", AutoOptions.summary() + (robot.ballCamera.isAvailable() ? "" : "  (no webcam)"));
         log("Shots", shots);
         log("Intake", robot.Intake.getCount() + "/" + robot.Intake.CAPACITY);
     }
@@ -323,9 +337,8 @@ public abstract class BaseAuto extends NextOpMode {
     // ------------------------------------------------------------------ PICKUP
 
     private Command pickupCycle(int i) {
-        double[][] lines = audience ? PICKUPS_AUDIENCE : PICKUPS_REAR;
-        if (i >= lines.length) return huntCycle();                // presets used up: look for loose pollen
-        double[] a = lines[i];
+        if (i >= pickups.size()) return huntCycle();              // presets used up: look for loose pollen
+        double[] a = pickups.get(i);
         return Groups.sequential(
                 Commands.instant(() -> {
                     robot.flywheel.stop();
