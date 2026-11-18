@@ -19,28 +19,6 @@ import java.util.List;
 import dev.nextftc.robot.opmode.NextAutonomous;
 import dev.nextftc.robot.opmode.NextOpMode;
 
-/**
- * BIOBUZZ autonomous: Pedro Pathing for position, the Turret mechanism (Limelight) for aiming.
- *
- * Game facts this is built on (manual TU09):
- *   - The target is the UPWARD-FACING CELL of your own HIVE (HIVE TIP = 20 pts, LEAVE = 3, PARK = 5).
- *     The AprilTag cluster sits on the bottom of each CELL, so the tag the turret locks onto IS the
- *     target cell. Red tags are 30-37, blue 38-45; the cell that is up has its tags facing the floor.
- *   - You start touching the wall, on your own half, with 4 POLLEN preloaded. LEAVE = leave the wall.
- *     PARK = end AUTO at least partly inside your own LOADING ZONE.
- *   - During AUTO stay on your own half (G402). Pollen to collect: your GARDEN (corner strip along
- *     the wall, 4 pollen) and the retrieval slots at the bottom of the FLOWERS on your half.
- *
- * Plan: drive to the shoot spot in front of our own HIVE, hold, let the turret lock on the tag, fire
- * when aimed / settled / spun up (no tag on that cell: run to the other end). Then GARDEN, pit FLOWER, audience FLOWER,
- * then the SCOOPS, each followed by a fire cycle; the last PARK_RESERVE_S is PARK.
- * Which pickups run is fixed per preset auto (opmodes/auto/presets); scoops are always on.
- *
- * Coordinates are Pedro map coordinates (inches, origin bottom-left, +x right, +y up, ~141.5 across,
- * read off the visualizer). Everything is written for the BLUE alliance; RED is the same layout
- * rotated 180 degrees about the field centre (the field is rotationally symmetric). Values marked
- * "guess" are NOT measured. Run one of the preset subclasses (opmodes/auto/presets), not this base.
- */
 public abstract class BaseAuto extends NextOpMode {
 
     // ---- Field layout (BLUE alliance; red = rotated 180 about the centre) ----
