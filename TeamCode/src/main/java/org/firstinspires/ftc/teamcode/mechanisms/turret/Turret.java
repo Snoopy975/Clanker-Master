@@ -16,25 +16,6 @@ import dev.nextftc.hardware.actuators.NextMotor;
 import dev.nextftc.robot.Mechanism;
 import dev.nextftc.units.Units;
 
-/**
- * 360 degree turret driven by ONE encoder motor (geared to the turntable).
- * Limelight 3A keeps it facing AprilTags; when no tag is visible it sweeps to search.
- *
- * SETUP:
- *  1. Add to Config.java:   public static final int turretMotor = <motor port>;
- *  2. Set TICKS_PER_TURRET_REV = motor ticks/rev * gear ratio (motor rev -> one full turret rev).
- *  3. Power the turret on with the cable fully UNWOUND (one end of travel): that is 0 degrees.
- *     Usable range is 0..360. A target past 360 (or below 0) wraps, e.g. 370 -> spins back to 10.
- *  4. Register Turret.INSTANCE in Robot.getMechanisms().
- *
- * ASSUMPTIONS (tune on the robot):
- *  - Limelight tx is positive when the tag is to the RIGHT.
- *  - Positive motor power turns the turret clockwise. Flip MOTOR_SIGN if it runs away from the tag.
- *  - Cables allow travel from MIN_DEG (0) to MAX_DEG (360) only.
- *    If you use a slip ring, set CONTINUOUS = true.
- *
- * NOTE: BIOBUZZ tags move, so this is for AIMING only, not field localization.
- */
 public class Turret implements Mechanism {
 
     public Turret() {}

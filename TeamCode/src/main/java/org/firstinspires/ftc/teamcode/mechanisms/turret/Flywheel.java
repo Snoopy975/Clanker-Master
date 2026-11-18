@@ -6,7 +6,6 @@ import dev.nextftc.hardware.RobotController;
 import dev.nextftc.hardware.actuators.NextMotor;
 import dev.nextftc.robot.Mechanism;
 
-/** Open-loop shooter wheel. Swap in velocity control (kV/kS/kP) once you've confirmed the NextMotor velocity API. */
 public class Flywheel implements Mechanism {
     public final NextMotor motor = new NextMotor(RobotController.expansionHub(), Config.FlywheelMotor);
 
