@@ -5,7 +5,7 @@ import org.firstinspires.ftc.teamcode.opmodes.auto.BaseAuto;
 
 import dev.nextftc.robot.opmode.NextAutonomous;
 
-@NextAutonomous(name = "Blue Pit Start | Scoop Only")
+@NextAutonomous(name = "Blue Pit Start | Scoop Only", group = "Blue Pit Start")
 public class BluePit_ScoopOnly extends BaseAuto {
     public BluePit_ScoopOnly(Robot robot) {
         super(robot, false, false, false, false, false);
