@@ -1,7 +1,6 @@
 package org.firstinspires.ftc.teamcode.mechanisms;
 
 import com.pedropathing.ivy.Command;
-import com.pedropathing.ivy.commands.Commands;
 
 import org.firstinspires.ftc.teamcode.data.Config;
 
@@ -34,12 +33,12 @@ public class Intake implements Mechanism {
     public void halt() { motor.setThrottle(0); }
 
     public Command run() {
-        return Commands.infinite(() -> motor.setThrottle(1.0));
+        return infinite(() -> motor.setThrottle(1.0));
     }
     public Command out(){
-        return Commands.instant(() -> motor.setThrottle(-1.0));
+        return instant(() -> motor.setThrottle(-1.0));
     }
     public Command stop(){
-        return Commands.instant(() -> motor.setThrottle(0));
+        return instant(() -> motor.setThrottle(0));
     }
 }
