@@ -11,10 +11,10 @@ import org.firstinspires.ftc.teamcode.data.Config;
 
 import java.util.List;
 
-import dev.nextftc.ftc.ActiveOpMode;
 import dev.nextftc.hardware.RobotController;
 import dev.nextftc.hardware.actuators.NextMotor;
 import dev.nextftc.robot.Mechanism;
+import dev.nextftc.units.Units;
 
 /**
  * 360 degree turret driven by ONE encoder motor (geared to the turntable).
@@ -106,12 +106,18 @@ public class Turret implements Mechanism {
 
     /** Turret angle in degrees; 0 = forward at power-on, positive = clockwise. */
     public double getAngleDeg() {
-        return MOTOR_SIGN * motor.getCurrentPosition() * 360.0 / TICKS_PER_TURRET_REV;
+        return MOTOR_SIGN * encoderCounts() * 360.0 / TICKS_PER_TURRET_REV;
     }
 
-    @Override
-    public void initialize() {
-        limelight = ActiveOpMode.hardwareMap().get(Limelight3A.class, "limelight");
+    /** Raw encoder counts. NextMotor reports an Angle = counts * anglePerCount, and anglePerCount is left at its 1 rad default. */
+    private double encoderCounts() {
+        return motor.getEncoderPosition().into(Units.Radians);
+    }
+
+    /** NextFTC's Mechanism has no initialize(); the Limelight is set up on the first periodic() instead. */
+    private void ensureInit() {
+        if (limelight != null) return;
+        limelight = RobotController.hardwareMap().get(Limelight3A.class, "limelight");
         limelight.setPollRateHz(100);
         limelight.pipelineSwitch(APRILTAG_PIPELINE);
         limelight.start();
@@ -121,6 +127,7 @@ public class Turret implements Mechanism {
 
     @Override
     public void periodic() {
+        ensureInit();
         long now = System.currentTimeMillis();
         tagVisibleNow = false;
 
@@ -238,6 +245,6 @@ public class Turret implements Mechanism {
             double a = getAngleDeg();
             if ((a >= MAX_DEG && power > 0) || (a <= MIN_DEG && power < 0)) power = 0;
         }
-        motor.setPower(Math.max(-1, Math.min(1, power)) * MOTOR_SIGN);
+        motor.setThrottle(Math.max(-1, Math.min(1, power)) * MOTOR_SIGN);
     }
 }
